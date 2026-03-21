@@ -119,7 +119,7 @@
                 
                 <!-- 底部信息 -->
                 <StackPanel Grid.Row="2" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,8">
-                    <TextBlock Text="v1.0.0" FontSize="9" Foreground="#666666" HorizontalAlignment="Center"/>
+                    <TextBlock Text="v1.0.3" FontSize="9" Foreground="#666666" HorizontalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Border>
