@@ -66,24 +66,27 @@ namespace MinecraftLuanch
         {
             InitializeComponent();
             
-            // 自动定位到启动器目录下的 .minecraft 文件夹
             var appPath = AppDomain.CurrentDomain.BaseDirectory;
             var defaultMinecraftPath = Path.Combine(appPath, ".minecraft");
-            
-            // 如果启动器目录下没有 .minecraft，则使用 AppData 中的
-            if (!Directory.Exists(defaultMinecraftPath))
-            {
-                defaultMinecraftPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    ".minecraft"
-                );
-            }
             
             GameRoot.Text = defaultMinecraftPath;
             CurrentGameRoot.Text = defaultMinecraftPath;
 
-            // 加载保存的配置
             LoadSettingsFromFile();
+
+            if (!Directory.Exists(GameRoot.Text))
+            {
+                try
+                {
+                    Directory.CreateDirectory(GameRoot.Text);
+                    Directory.CreateDirectory(Path.Combine(GameRoot.Text, "versions"));
+                    AppendLog($"已创建游戏目录: {GameRoot.Text}");
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"创建游戏目录失败: {ex.Message}");
+                }
+            }
 
             RefreshVersions();
             RefreshJava();

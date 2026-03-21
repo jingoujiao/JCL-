@@ -422,8 +422,8 @@ namespace MinecraftLuanch
                 
                 string[] indexUrls = new string[]
                 {
-                    $"https://launchermeta.mojang.com/mc/game/assets/indexes/{assetsIndexName}.json",
                     $"{BmclApiBase}/assets/indexes/{assetsIndexName}.json",
+                    $"https://launchermeta.mojang.com/mc/game/assets/indexes/{assetsIndexName}.json",
                 };
 
                 bool indexDownloaded = false;
@@ -517,18 +517,20 @@ namespace MinecraftLuanch
                         
                         string[] assetUrls = new string[]
                         {
+                            $"{BmclApiBase}/assets/{prefix}/{hash}",
                             $"https://resources.download.minecraft.net/{prefix}/{hash}",
-                            $"{BmclApiBase}/assets/objects/{prefix}/{hash}",
                         };
 
                         bool success = false;
                         Exception? lastEx = null;
+                        int retryCount = 0;
                         
                         foreach (var url in assetUrls)
                         {
+                            retryCount++;
                             try
                             {
-                                await DownloadFileWithRetryAsync(url, assetPath, 3, cancellationToken);
+                                await DownloadFileWithRetryAsync(url, assetPath, 5, cancellationToken);
                                 success = true;
                                 break;
                             }
@@ -538,6 +540,10 @@ namespace MinecraftLuanch
                                 if (File.Exists(assetPath))
                                 {
                                     try { File.Delete(assetPath); } catch { }
+                                }
+                                if (retryCount == 1 && assetUrls.Length > 1)
+                                {
+                                    AppendLog($"BMCLAPI下载失败，尝试官方源: {name}");
                                 }
                             }
                         }
@@ -582,6 +588,13 @@ namespace MinecraftLuanch
                 {
                     AppendLog($"  - {name}");
                 }
+                AppendLog($"提示: 如果资源下载失败，可以尝试重新安装该版本，已下载的文件会被跳过");
+            }
+            
+            if (failed > total * 0.1)
+            {
+                AppendLog($"警告: 超过10%的资源文件下载失败，游戏可能无法正常运行");
+                AppendLog($"建议: 检查网络连接后重新安装该版本");
             }
         }
 
