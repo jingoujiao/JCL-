@@ -119,7 +119,7 @@
                 
                 <!-- 底部信息 -->
                 <StackPanel Grid.Row="2" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,8">
-                    <TextBlock Text="v1.0.4" FontSize="9" Foreground="#666666" HorizontalAlignment="Center"/>
+                    <TextBlock Text="v1.0.5" FontSize="9" Foreground="#666666" HorizontalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -440,8 +440,17 @@
                         <StackPanel Margin="25">
                             <TextBlock Text="👤 账号管理" FontSize="20" FontWeight="Bold" Margin="0,0,0,20" Foreground="#333333"/>
                             
+                            <!-- 账号类型选择 -->
+                            <Border Background="#FFF3E0" CornerRadius="6" Padding="15" Margin="0,0,0,15">
+                                <StackPanel>
+                                    <TextBlock Text="🔑 选择登录方式" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#333333"/>
+                                    <RadioButton x:Name="OfflineModeRadio" Content="离线模式" FontSize="13" IsChecked="True" Margin="0,0,0,8" Checked="OfflineModeRadio_Checked"/>
+                                    <RadioButton x:Name="OnlineModeRadio" Content="正版验证（微软账号）" FontSize="13" Checked="OnlineModeRadio_Checked"/>
+                                </StackPanel>
+                            </Border>
+                            
                             <!-- 离线账号设置 -->
-                            <Border Background="#F5F5F5" CornerRadius="6" Padding="15" Margin="0,0,0,15">
+                            <Border x:Name="OfflineAccountPanel" Background="#F5F5F5" CornerRadius="6" Padding="15" Margin="0,0,0,15">
                                 <StackPanel>
                                     <TextBlock Text="🎮 离线账号" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#333333"/>
                                     <TextBlock Text="离线模式无需正版账号，输入昵称即可游戏" FontSize="12" Foreground="#666666" Margin="0,0,0,10"/>
@@ -452,27 +461,63 @@
                                 </StackPanel>
                             </Border>
                             
+                            <!-- 正版验证设置 -->
+                            <Border x:Name="OnlineAccountPanel" Background="#E8F5E9" CornerRadius="6" Padding="15" Margin="0,0,0,15" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Text="🔐 正版验证" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#333333"/>
+                                    <TextBlock Text="使用微软账号登录，支持皮肤和正版服务器" FontSize="12" Foreground="#666666" Margin="0,0,0,10"/>
+                                    <Button x:Name="MicrosoftLoginButton" Content="🔑 微软账号登录" MinHeight="40"
+                                            Background="#0078D4" Foreground="White" 
+                                            BorderThickness="0" FontSize="14" FontWeight="Bold"
+                                            Click="MicrosoftLoginButton_Click">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="15">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                    </Button>
+                                    <TextBlock x:Name="LoginStatusText" Text="" FontSize="12" Foreground="#666666" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            
                             <!-- 账号信息 -->
                             <Border Background="#E3F2FD" CornerRadius="6" Padding="15" Margin="0,0,0,15">
                                 <StackPanel>
                                     <TextBlock Text="ℹ️ 当前账号信息" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#1976D2"/>
                                     <TextBlock x:Name="CurrentAccountInfo" Text="模式：离线模式" FontSize="13" Foreground="#333333"/>
                                     <TextBlock x:Name="CurrentPlayerName" Text="昵称：未设置" FontSize="13" Foreground="#333333" Margin="0,5,0,0"/>
+                                    <TextBlock x:Name="CurrentPlayerUuid" Text="" FontSize="11" Foreground="#999999" Margin="0,5,0,0" Visibility="Collapsed"/>
                                 </StackPanel>
                             </Border>
                             
-                            <Button x:Name="SaveAccountButton" Content="💾 保存账号设置" Width="150" Height="38" 
-                                    Background="#4CAF50" Foreground="White" 
-                                    BorderThickness="0" FontSize="13" FontWeight="Bold"
-                                    HorizontalAlignment="Left" Click="SaveAccountButton_Click">
-                                <Button.Template>
-                                    <ControlTemplate TargetType="Button">
-                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="12">
-                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                    </ControlTemplate>
-                                </Button.Template>
-                            </Button>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                                <Button x:Name="SaveAccountButton" Content="💾 保存离线昵称" Width="150" Height="38" 
+                                        Background="#4CAF50" Foreground="White" 
+                                        BorderThickness="0" FontSize="13" FontWeight="Bold"
+                                        HorizontalAlignment="Left" Click="SaveAccountButton_Click" Margin="0,0,10,0">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="12">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                                <Button x:Name="DeleteAccountButton" Content="🗑️ 删除账号" Width="120" Height="38" 
+                                        Background="#F44336" Foreground="White" 
+                                        BorderThickness="0" FontSize="13" FontWeight="Bold"
+                                        HorizontalAlignment="Left" Click="DeleteAccountButton_Click">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="12">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                            </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>

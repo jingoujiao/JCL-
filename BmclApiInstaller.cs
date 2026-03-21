@@ -412,7 +412,6 @@ namespace MinecraftLuanch
             var assetsDir = Path.Combine(_minecraftRoot, "assets");
             Directory.CreateDirectory(assetsDir);
 
-            // 下载 assets index
             var indexesDir = Path.Combine(assetsDir, "indexes");
             Directory.CreateDirectory(indexesDir);
             var indexJsonPath = Path.Combine(indexesDir, $"{assetsIndexName}.json");
@@ -421,12 +420,10 @@ namespace MinecraftLuanch
             {
                 AppendLog($"需要下载资源索引: {assetsIndexName}.json");
                 
-                // 尝试多个 URL 格式下载 assets index
                 string[] indexUrls = new string[]
                 {
-                    $"{BmclApiBase}/assets/indexes/{assetsIndexName}.json",
                     $"https://launchermeta.mojang.com/mc/game/assets/indexes/{assetsIndexName}.json",
-                    $"https://bmclapi2.bangbang93.com/assets/indexes/{assetsIndexName}.json",
+                    $"{BmclApiBase}/assets/indexes/{assetsIndexName}.json",
                 };
 
                 bool indexDownloaded = false;
@@ -435,7 +432,7 @@ namespace MinecraftLuanch
                     try
                     {
                         AppendLog($"尝试从 {url} 下载资源索引");
-                        await DownloadFileAsync(url, indexJsonPath, cancellationToken);
+                        await DownloadFileWithRetryAsync(url, indexJsonPath, 5, cancellationToken);
                         AppendLog("资源索引下载成功");
                         indexDownloaded = true;
                         break;
@@ -457,7 +454,6 @@ namespace MinecraftLuanch
                 AppendLog($"使用已存在的资源索引: {assetsIndexName}.json");
             }
 
-            // 解析 assets index
             var indexJson = await File.ReadAllTextAsync(indexJsonPath, cancellationToken);
             using var indexDoc = JsonDocument.Parse(indexJson);
             
@@ -467,28 +463,15 @@ namespace MinecraftLuanch
                 return;
             }
 
-            // 下载 assets
             var objectsDir = Path.Combine(assetsDir, "objects");
             Directory.CreateDirectory(objectsDir);
 
-            int total = 0;
-            int downloaded = 0;
-            int failed = 0;
+            var assetsToDownload = new List<(string name, string hash, string prefix)>();
             
             foreach (var prop in objects.EnumerateObject())
             {
-                total++;
-            }
-
-            AppendLog($"共 {total} 个资源文件需要检查");
-
-            foreach (var prop in objects.EnumerateObject())
-            {
-                var resourceName = prop.Name;
                 if (!prop.Value.TryGetProperty("hash", out var hashElement))
-                {
                     continue;
-                }
 
                 var hash = hashElement.GetString();
                 if (string.IsNullOrEmpty(hash)) continue;
@@ -501,49 +484,165 @@ namespace MinecraftLuanch
                 
                 if (!File.Exists(assetPath))
                 {
-                    bool assetDownloaded = false;
-                    
-                    // 尝试多个 URL 格式
-                    string[] assetUrls = new string[]
-                    {
-                        $"{BmclApiBase}/assets/objects/{prefix}/{hash}",
-                        $"https://resources.download.minecraft.net/{prefix}/{hash}",
-                        $"https://bmclapi2.bangbang93.com/assets/objects/{prefix}/{hash}",
-                    };
-
-                    foreach (var url in assetUrls)
-                    {
-                        try
-                        {
-                            await DownloadFileAsync(url, assetPath, cancellationToken);
-                            assetDownloaded = true;
-                            break;
-                        }
-                        catch (Exception ex)
-                        {
-                            // 继续尝试下一个 URL
-                        }
-                    }
-
-                    if (!assetDownloaded)
-                    {
-                        failed++;
-                        if (failed <= 5)
-                        {
-                            AppendLog($"警告: 资源文件 {hash.Substring(0, 8)}... 下载失败");
-                        }
-                    }
-                }
-
-                downloaded++;
-                if (downloaded % 50 == 0 || downloaded == total)
-                {
-                    var progress = 60 + (downloaded * 10 / total);
-                    ReportProgress($"正在下载资源文件 ({downloaded}/{total})", $"{progress}%");
+                    assetsToDownload.Add((prop.Name, hash, prefix));
                 }
             }
 
-            AppendLog($"资源文件处理完成: {downloaded}/{total}, 失败: {failed}");
+            int total = assetsToDownload.Count;
+            if (total == 0)
+            {
+                AppendLog("所有资源文件已存在，无需下载");
+                return;
+            }
+
+            AppendLog($"共 {total} 个资源文件需要下载");
+
+            int downloaded = 0;
+            int failed = 0;
+            var failedAssets = new List<string>();
+            
+            var semaphore = new SemaphoreSlim(8);
+            var tasks = new List<Task>();
+
+            foreach (var (name, hash, prefix) in assetsToDownload)
+            {
+                await semaphore.WaitAsync(cancellationToken);
+                
+                var task = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var assetDir = Path.Combine(objectsDir, prefix);
+                        var assetPath = Path.Combine(assetDir, hash);
+                        
+                        string[] assetUrls = new string[]
+                        {
+                            $"https://resources.download.minecraft.net/{prefix}/{hash}",
+                            $"{BmclApiBase}/assets/objects/{prefix}/{hash}",
+                        };
+
+                        bool success = false;
+                        Exception? lastEx = null;
+                        
+                        foreach (var url in assetUrls)
+                        {
+                            try
+                            {
+                                await DownloadFileWithRetryAsync(url, assetPath, 3, cancellationToken);
+                                success = true;
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                lastEx = ex;
+                                if (File.Exists(assetPath))
+                                {
+                                    try { File.Delete(assetPath); } catch { }
+                                }
+                            }
+                        }
+
+                        if (!success)
+                        {
+                            lock (failedAssets)
+                            {
+                                failedAssets.Add(name);
+                                failed++;
+                            }
+                            if (failed <= 10)
+                            {
+                                AppendLog($"资源下载失败: {name} - {lastEx?.Message}");
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        Interlocked.Increment(ref downloaded);
+                        
+                        if (downloaded % 50 == 0 || downloaded == total)
+                        {
+                            var progress = 50 + (downloaded * 20 / total);
+                            ReportProgress($"正在下载资源文件 ({downloaded}/{total}, 失败: {failed})", $"{progress}%");
+                        }
+                    }
+                }, cancellationToken);
+                
+                tasks.Add(task);
+            }
+
+            await Task.WhenAll(tasks);
+
+            AppendLog($"资源文件下载完成: 成功 {total - failed}, 失败 {failed}");
+            
+            if (failed > 0)
+            {
+                AppendLog($"失败的资源文件列表（前20个）:");
+                foreach (var name in failedAssets.Take(20))
+                {
+                    AppendLog($"  - {name}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 带重试的文件下载
+        /// </summary>
+        private async Task DownloadFileWithRetryAsync(string url, string savePath, int maxRetries, CancellationToken cancellationToken)
+        {
+            Exception? lastException = null;
+            
+            for (int i = 0; i < maxRetries; i++)
+            {
+                try
+                {
+                    using var httpClient = new HttpClient
+                    {
+                        Timeout = TimeSpan.FromMinutes(2)
+                    };
+                    
+                    using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+
+                    var dir = Path.GetDirectoryName(savePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    var tempPath = savePath + ".tmp";
+                    
+                    using (var stream = await response.Content.ReadAsStreamAsync(cancellationToken))
+                    using (var fileStream = File.Create(tempPath))
+                    {
+                        var buffer = new byte[81920];
+                        int bytesRead;
+
+                        while ((bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+                        {
+                            await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                        }
+                    }
+                    
+                    if (File.Exists(savePath))
+                    {
+                        File.Delete(savePath);
+                    }
+                    File.Move(tempPath, savePath);
+                    
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    if (i < maxRetries - 1)
+                    {
+                        await Task.Delay(1000 * (i + 1), cancellationToken);
+                    }
+                }
+            }
+
+            throw lastException ?? new Exception($"下载失败：{url}");
         }
 
         /// <summary>

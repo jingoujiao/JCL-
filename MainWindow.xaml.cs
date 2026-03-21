@@ -32,6 +32,14 @@ namespace MinecraftLuanch
     {
         private DateTime _lastRootChange = DateTime.MinValue;
         private string? _currentVersion;
+        
+        private bool _isOnlineMode = false;
+        private GetTokenResponse? _cachedTokenInfo;
+        private string? _cachedPlayerName;
+        private bool _isInitialized = false;
+        
+        private const string MicrosoftClientId = "e1e383f9-59d9-4aa2-bf5e-73fe83b15ba0";
+        
         private Dictionary<string, int> _versionJavaRequirements = new()
         {
             // Minecraft 版本 -> 所需的最低 Java 版本
@@ -85,6 +93,23 @@ namespace MinecraftLuanch
             
             // 加载公告
             _ = LoadAnnouncementAsync();
+            
+            _isInitialized = true;
+            
+            if (_isOnlineMode)
+            {
+                OfflineModeRadio.IsChecked = false;
+                OnlineModeRadio.IsChecked = true;
+                OfflineAccountPanel.Visibility = Visibility.Collapsed;
+                OnlineAccountPanel.Visibility = Visibility.Visible;
+                SaveAccountButton.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                SaveAccountButton.Visibility = Visibility.Visible;
+            }
+            
+            UpdateAccountInfo();
         }
 
         /// <summary>
@@ -549,10 +574,125 @@ namespace MinecraftLuanch
         /// </summary>
         private void UpdateAccountInfo()
         {
-            var playerName = PlayerName.Text?.Trim();
-            CurrentPlayerName.Text = string.IsNullOrWhiteSpace(playerName) 
-                ? "昵称：未设置" 
-                : $"昵称：{playerName}";
+            if (_isOnlineMode)
+            {
+                CurrentAccountInfo.Text = "模式：正版验证（微软账号）";
+                CurrentPlayerName.Text = string.IsNullOrEmpty(_cachedPlayerName) 
+                    ? "昵称：未登录" 
+                    : $"昵称：{_cachedPlayerName}";
+                CurrentPlayerUuid.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                CurrentAccountInfo.Text = "模式：离线模式";
+                var playerName = PlayerName.Text?.Trim();
+                CurrentPlayerName.Text = string.IsNullOrWhiteSpace(playerName) 
+                    ? "昵称：未设置" 
+                    : $"昵称：{playerName}";
+                CurrentPlayerUuid.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        /// <summary>
+        /// 离线模式选择
+        /// </summary>
+        private void OfflineModeRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!_isInitialized) return;
+            _isOnlineMode = false;
+            OfflineAccountPanel.Visibility = Visibility.Visible;
+            OnlineAccountPanel.Visibility = Visibility.Collapsed;
+            SaveAccountButton.Visibility = Visibility.Visible;
+            UpdateAccountInfo();
+        }
+
+        /// <summary>
+        /// 正版模式选择
+        /// </summary>
+        private void OnlineModeRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!_isInitialized) return;
+            _isOnlineMode = true;
+            OfflineAccountPanel.Visibility = Visibility.Collapsed;
+            OnlineAccountPanel.Visibility = Visibility.Visible;
+            SaveAccountButton.Visibility = Visibility.Collapsed;
+            UpdateAccountInfo();
+        }
+
+        /// <summary>
+        /// 微软账号登录
+        /// </summary>
+        private async void MicrosoftLoginButton_Click(object sender, RoutedEventArgs e)
+        {
+            await Dispatcher.InvokeAsync(() => MicrosoftLoginButton.IsEnabled = false);
+            await Dispatcher.InvokeAsync(() => LoginStatusText.Text = "正在启动登录流程...");
+            
+            try
+            {
+                var auth = new MicrosoftAuthentication(MicrosoftClientId);
+                var deviceCodeInfo = await auth.RetrieveDeviceCodeInfo();
+                
+                await Dispatcher.InvokeAsync(() => 
+                    LoginStatusText.Text = $"正在打开浏览器...\n\n验证代码: {deviceCodeInfo.UserCode}\n\n请在浏览器中完成登录");
+                
+                System.Windows.Clipboard.SetText(deviceCodeInfo.UserCode);
+                
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = deviceCodeInfo.VerificationUri,
+                        UseShellExecute = true
+                    });
+                    MessageBox.Show($"验证代码已复制到剪贴板！\n\n代码: {deviceCodeInfo.UserCode}\n\n浏览器已打开，请在浏览器中粘贴代码并完成登录。", 
+                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception)
+                {
+                    MessageBox.Show($"无法自动打开浏览器，验证代码已复制到剪贴板。\n\n请手动访问：{deviceCodeInfo.VerificationUri}\n输入代码：{deviceCodeInfo.UserCode}", 
+                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                
+                var tokenInfo = await auth.GetTokenResponse(deviceCodeInfo);
+                var userInfo = await auth.MicrosoftAuthAsync(tokenInfo, progress =>
+                {
+                    Dispatcher.InvokeAsync(() => LoginStatusText.Text = progress);
+                });
+                
+                if (userInfo != null && !string.IsNullOrEmpty(userInfo.AccessToken))
+                {
+                    _cachedTokenInfo = tokenInfo;
+                    _cachedPlayerName = userInfo.Name;
+                    _isOnlineMode = true;
+                    
+                    AppendLog($"登录成功 - AccessToken长度: {tokenInfo?.AccessToken?.Length ?? 0}, RefreshToken长度: {tokenInfo?.RefreshToken?.Length ?? 0}");
+                    
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        LoginStatusText.Text = $"登录成功！\n玩家：{userInfo.Name}";
+                        UpdateAccountInfo();
+                    });
+                    
+                    SaveSettingsToFile();
+                    
+                    MessageBox.Show($"微软账号登录成功！\n\n玩家名称：{userInfo.Name}\nUUID：{userInfo.Uuid}\n\n账号信息已自动保存。", 
+                        "登录成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    await Dispatcher.InvokeAsync(() => LoginStatusText.Text = "登录失败：未获取到有效的访问令牌");
+                    MessageBox.Show("登录失败，请重试。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                await Dispatcher.InvokeAsync(() => LoginStatusText.Text = $"登录失败：{ex.Message}");
+                MessageBox.Show($"登录失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                await Dispatcher.InvokeAsync(() => MicrosoftLoginButton.IsEnabled = true);
+            }
         }
 
         /// <summary>
@@ -560,16 +700,54 @@ namespace MinecraftLuanch
         /// </summary>
         private void SaveAccountButton_Click(object sender, RoutedEventArgs e)
         {
-            var playerName = PlayerName.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(playerName))
+            if (_isOnlineMode)
             {
-                MessageBox.Show("请输入离线昵称！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
+                if (_cachedTokenInfo == null)
+                {
+                    MessageBox.Show("请先登录微软账号！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+            }
+            else
+            {
+                var playerName = PlayerName.Text?.Trim();
+                if (string.IsNullOrWhiteSpace(playerName))
+                {
+                    MessageBox.Show("请输入离线昵称！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
             }
 
             UpdateAccountInfo();
             SaveSettingsToFile();
             MessageBox.Show("账号设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>
+        /// 删除账号
+        /// </summary>
+        private void DeleteAccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show("确定要删除当前账号信息吗？\n\n删除后需要重新登录。", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            
+            if (result == MessageBoxResult.Yes)
+            {
+                _isOnlineMode = false;
+                _cachedTokenInfo = null;
+                _cachedPlayerName = null;
+                PlayerName.Text = "";
+                
+                OfflineModeRadio.IsChecked = true;
+                OnlineModeRadio.IsChecked = false;
+                OfflineAccountPanel.Visibility = Visibility.Visible;
+                OnlineAccountPanel.Visibility = Visibility.Collapsed;
+                
+                LoginStatusText.Text = "";
+                UpdateAccountInfo();
+                SaveSettingsToFile();
+                
+                MessageBox.Show("账号已删除！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
         }
 
         /// <summary>
@@ -1056,6 +1234,15 @@ namespace MinecraftLuanch
                 config.AppendLine($"MaxMemory={MaxMemory.Text}");
                 config.AppendLine($"PlayerName={PlayerName.Text}");
                 config.AppendLine($"FullScreen={FullScreen.IsChecked}");
+                config.AppendLine($"IsOnlineMode={_isOnlineMode}");
+                
+                if (_isOnlineMode && _cachedTokenInfo != null)
+                {
+                    AppendLog($"保存Token - AccessToken: {(_cachedTokenInfo.AccessToken?.Length > 20 ? _cachedTokenInfo.AccessToken.Substring(0, 20) + "..." : "null")}, RefreshToken: {(_cachedTokenInfo.RefreshToken?.Length > 20 ? _cachedTokenInfo.RefreshToken.Substring(0, 20) + "..." : "null")}");
+                    config.AppendLine($"AccessToken={_cachedTokenInfo.AccessToken}");
+                    config.AppendLine($"RefreshToken={_cachedTokenInfo.RefreshToken}");
+                    config.AppendLine($"PlayerNameOnline={_cachedPlayerName}");
+                }
 
                 File.WriteAllText(configPath, config.ToString());
                 AppendLog("设置已保存到配置文件");
@@ -1079,6 +1266,10 @@ namespace MinecraftLuanch
                 if (File.Exists(configPath))
                 {
                     var config = File.ReadAllLines(configPath);
+                    string? accessToken = null;
+                    string? refreshToken = null;
+                    string? playerNameOnline = null;
+                    
                     foreach (var line in config)
                     {
                         var parts = line.Split('=', 2);
@@ -1105,9 +1296,40 @@ namespace MinecraftLuanch
                                         FullScreen.IsChecked = fullScreen;
                                     }
                                     break;
+                                case "IsOnlineMode":
+                                    if (bool.TryParse(value, out var isOnline))
+                                    {
+                                        _isOnlineMode = isOnline;
+                                    }
+                                    break;
+                                case "AccessToken":
+                                    accessToken = value;
+                                    break;
+                                case "RefreshToken":
+                                    refreshToken = value;
+                                    break;
+                                case "PlayerNameOnline":
+                                    playerNameOnline = value;
+                                    break;
                             }
                         }
                     }
+                    
+                    if (_isOnlineMode && !string.IsNullOrEmpty(accessToken) && !string.IsNullOrEmpty(refreshToken))
+                    {
+                        _cachedTokenInfo = new GetTokenResponse
+                        {
+                            AccessToken = accessToken,
+                            RefreshToken = refreshToken
+                        };
+                        _cachedPlayerName = playerNameOnline;
+                        AppendLog($"加载Token成功 - AccessToken长度: {accessToken.Length}, RefreshToken长度: {refreshToken.Length}");
+                    }
+                    else if (_isOnlineMode)
+                    {
+                        AppendLog($"警告: 在线模式但Token为空 - AccessToken: {(string.IsNullOrEmpty(accessToken) ? "空" : "有值")}, RefreshToken: {(string.IsNullOrEmpty(refreshToken) ? "空" : "有值")}");
+                    }
+                    
                     AppendLog("已从配置文件加载设置");
                 }
             }
@@ -1124,11 +1346,22 @@ namespace MinecraftLuanch
             {
                 LogBox.Clear();
 
-                var playerName = PlayerName.Text?.Trim();
-                if (string.IsNullOrWhiteSpace(playerName))
+                if (_isOnlineMode)
                 {
-                    MessageBox.Show("请输入离线昵称。");
-                    return;
+                    if (_cachedTokenInfo == null)
+                    {
+                        MessageBox.Show("请先在账号管理中登录微软账号。");
+                        return;
+                    }
+                }
+                else
+                {
+                    var playerName = PlayerName.Text?.Trim();
+                    if (string.IsNullOrWhiteSpace(playerName))
+                    {
+                        MessageBox.Show("请输入离线昵称。");
+                        return;
+                    }
                 }
 
                 var root = GameRoot.Text?.Trim();
@@ -1195,7 +1428,20 @@ namespace MinecraftLuanch
                     return;
                 }
 
-                var account = new OfflineAuthentication(playerName).OfflineAuth(); // 离线认证
+                dynamic account;
+                if (_isOnlineMode && _cachedTokenInfo != null)
+                {
+                    var msAuth = new MicrosoftAuthentication(MicrosoftClientId);
+                    account = await msAuth.MicrosoftAuthAsync(_cachedTokenInfo, progress =>
+                    {
+                        Dispatcher.InvokeAsync(() => AppendLog(progress));
+                    });
+                }
+                else
+                {
+                    var playerName = PlayerName.Text?.Trim() ?? "Player";
+                    account = new OfflineAuthentication(playerName).OfflineAuth();
+                }
 
                 LaunchConfig args = new() // 配置启动参数
                 {
