@@ -448,6 +448,7 @@ namespace MinecraftLuanch
             LaunchPage.Visibility = Visibility.Collapsed;
             DownloadPage.Visibility = Visibility.Collapsed;
             VersionsPage.Visibility = Visibility.Collapsed;
+            AccountPage.Visibility = Visibility.Collapsed;
             SettingsPage.Visibility = Visibility.Collapsed;
             MorePage.Visibility = Visibility.Collapsed;
 
@@ -458,6 +459,7 @@ namespace MinecraftLuanch
                     LaunchButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
                     VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
                     break;
@@ -466,6 +468,7 @@ namespace MinecraftLuanch
                     LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
                     DownloadButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
                     break;
@@ -474,6 +477,17 @@ namespace MinecraftLuanch
                     LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
                     DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
                     VersionsButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
+                    SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    MoreButton.Background = System.Windows.Media.Brushes.Transparent;
+                    break;
+                case "Account":
+                    AccountPage.Visibility = Visibility.Visible;
+                    UpdateAccountInfo();
+                    LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
+                    DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
+                    VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
                     break;
@@ -483,6 +497,7 @@ namespace MinecraftLuanch
                     LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
                     DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
                     VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
                     break;
@@ -491,6 +506,7 @@ namespace MinecraftLuanch
                     LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
                     DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
                     VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     break;
@@ -507,6 +523,17 @@ namespace MinecraftLuanch
             SwitchPage("Download");
         }
 
+        private void VersionsButton_Click(object sender, RoutedEventArgs e)
+        {
+            SwitchPage("Versions");
+            RefreshVersionsList();
+        }
+
+        private void AccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            SwitchPage("Account");
+        }
+
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
             SwitchPage("Settings");
@@ -517,10 +544,32 @@ namespace MinecraftLuanch
             SwitchPage("More");
         }
 
-        private void VersionsButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 更新账号信息显示
+        /// </summary>
+        private void UpdateAccountInfo()
         {
-            SwitchPage("Versions");
-            RefreshVersionsList();
+            var playerName = PlayerName.Text?.Trim();
+            CurrentPlayerName.Text = string.IsNullOrWhiteSpace(playerName) 
+                ? "昵称：未设置" 
+                : $"昵称：{playerName}";
+        }
+
+        /// <summary>
+        /// 保存账号设置
+        /// </summary>
+        private void SaveAccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            var playerName = PlayerName.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(playerName))
+            {
+                MessageBox.Show("请输入离线昵称！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            UpdateAccountInfo();
+            SaveSettingsToFile();
+            MessageBox.Show("账号设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         /// <summary>
