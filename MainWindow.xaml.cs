@@ -1571,9 +1571,15 @@ namespace MinecraftLuanch
             }
         }
 
+        private CancellationTokenSource? _installCts;
+        private string? _installingVersion;
+        private string? _installingRoot;
+
         private async void InstallVanilla_Click(object sender, RoutedEventArgs e)
         {
             InstallVanillaButton.IsEnabled = false;
+            CancelButton.Visibility = Visibility.Visible;
+            
             try
             {
                 var root = GameRoot.Text?.Trim();
@@ -1583,7 +1589,6 @@ namespace MinecraftLuanch
                     return;
                 }
 
-                // 从 ComboBox 获取选择的版本号
                 var targetVersion = InstallVersion.SelectedItem as string;
                 if (string.IsNullOrWhiteSpace(targetVersion))
                 {
@@ -1594,11 +1599,12 @@ namespace MinecraftLuanch
                 AppendLog($"开始安装原版：{targetVersion} 到 {root}");
                 AppendLog("使用 BMCLAPI 镜像源进行下载（国内高速）");
 
-                using var cts = new CancellationTokenSource();
+                _installCts = new CancellationTokenSource();
+                _installingVersion = targetVersion;
+                _installingRoot = root;
 
                 try
                 {
-                    // 使用 BMCLAPI 镜像源安装
                     var installer = new BmclApiInstaller(targetVersion, root, 
                         (status, progress) =>
                         {
@@ -1615,13 +1621,34 @@ namespace MinecraftLuanch
                         });
 
                     AppendLog("开始下载和安装...");
-                    await installer.InstallAsync(cts.Token);
+                    await installer.InstallAsync(_installCts.Token);
 
                     AppendLog("原版安装完成。");
                     AppendLog($"请检查目录：{Path.Combine(root, "versions", targetVersion)}");
                     RefreshVersions();
                     
                     MessageBox.Show($"版本 {targetVersion} 安装成功！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (OperationCanceledException)
+                {
+                    AppendLog("下载已取消");
+                    AppendLog("正在清理已下载的文件...");
+                    
+                    try
+                    {
+                        var versionDir = Path.Combine(root, "versions", targetVersion);
+                        if (Directory.Exists(versionDir))
+                        {
+                            Directory.Delete(versionDir, true);
+                            AppendLog($"已删除版本目录: {versionDir}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendLog($"清理文件失败: {ex.Message}");
+                    }
+                    
+                    MessageBox.Show("下载已取消", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 catch (Exception ex)
                 {
@@ -1632,8 +1659,14 @@ namespace MinecraftLuanch
                     {
                         AppendLog($"内部异常：{ex.InnerException.Message}");
                     }
+                    
                     MessageBox.Show($"安装原版时发生异常：\n{ex.Message}\n\n请检查：\n1. 网络连接是否正常\n2. 版本号是否正确（如 1.21.1）\n3. 游戏目录是否有写入权限");
-                    return;
+                }
+                finally
+                {
+                    InstallVanillaButton.IsEnabled = true;
+                    CancelButton.Visibility = Visibility.Collapsed;
+                    _installCts?.Dispose();
                 }
             }
             catch (Exception ex)
@@ -1645,6 +1678,16 @@ namespace MinecraftLuanch
             finally
             {
                 InstallVanillaButton.IsEnabled = true;
+                CancelButton.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void CancelDownload_Click(object sender, RoutedEventArgs e)
+        {
+            if (_installCts != null && !_installCts.IsCancellationRequested)
+            {
+                _installCts.Cancel();
+                AppendLog("正在取消下载...");
             }
         }
     }

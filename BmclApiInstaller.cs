@@ -522,7 +522,7 @@ namespace MinecraftLuanch
             int failed = 0;
             var failedAssets = new List<string>();
             
-            var semaphore = new SemaphoreSlim(8);
+            var semaphore = new SemaphoreSlim(32);
             var tasks = new List<Task>();
 
             foreach (var (name, hash, prefix) in assetsToDownload)
