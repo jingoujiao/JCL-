@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:MinecraftLuanch"
         mc:Ignorable="d"
-        Title="Minecraft 启动器" Height="600" Width="1000" MinHeight="600" MinWidth="1000"
+        Title="JCL 启动器" Height="600" Width="1000" MinHeight="600" MinWidth="1000"
         WindowStartupLocation="CenterScreen"
         Background="#F5F5F5">
     
@@ -27,7 +27,7 @@
                 <!-- 启动器 Logo -->
                 <StackPanel Grid.Row="0" VerticalAlignment="Center" HorizontalAlignment="Center">
                     <TextBlock Text="⛏️" FontSize="24" HorizontalAlignment="Center"/>
-                    <TextBlock Text="启动器" FontSize="11" Foreground="#AAAAAA" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                    <TextBlock Text="JCL 启动器" FontSize="11" Foreground="#AAAAAA" HorizontalAlignment="Center" Margin="0,2,0,0"/>
                 </StackPanel>
                 
                 <!-- 导航按钮 -->
@@ -74,6 +74,20 @@
                         </Button.Template>
                     </Button>
                     
+                    <Button x:Name="AccountButton" Content="👤 账号" 
+                            Width="120" Height="38" Margin="0,8"
+                            Background="Transparent" Foreground="White"
+                            BorderThickness="0" FontSize="13"
+                            Click="AccountButton_Click">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="8">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    
                     <Button x:Name="SettingsButton" Content="⚙️ 设置" 
                             Width="120" Height="38" Margin="0,8"
                             Background="Transparent" Foreground="White"
@@ -105,7 +119,7 @@
                 
                 <!-- 底部信息 -->
                 <StackPanel Grid.Row="2" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,8">
-                    <TextBlock Text="v1.0.0" FontSize="9" Foreground="#666666" HorizontalAlignment="Center"/>
+                    <TextBlock Text="v1.1.1" FontSize="9" Foreground="#666666" HorizontalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -120,41 +134,27 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     
-                    <!-- 公告栏 -->
-                    <Border Grid.Row="0" Background="#E3F2FD" CornerRadius="8" Margin="20" Padding="20">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
+                    <!-- 中央启动区域 -->
+                    <Border Grid.Row="0" Background="#F9F9F9" CornerRadius="8" Margin="20" Padding="30">
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="500">
+                            <TextBlock Text="🎮 JCL 启动器" FontSize="28" FontWeight="Bold" 
+                                       Foreground="#333333" HorizontalAlignment="Center" Margin="0,0,0,30"/>
                             
-                            <TextBlock Grid.Row="0" Text="📢 公告" FontSize="16" FontWeight="Bold" Foreground="#1976D2" Margin="0,0,0,10"/>
-                            <Border Grid.Row="1" Background="White" CornerRadius="4" Padding="15">
-                                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                    <TextBlock x:Name="AnnouncementText" TextWrapping="Wrap" Foreground="#333333" FontSize="13" LineHeight="22"/>
-                                </ScrollViewer>
-                            </Border>
-                        </Grid>
-                    </Border>
-                    
-                    <!-- 底部启动区域 -->
-                    <Border Grid.Row="1" Background="#F9F9F9" CornerRadius="8" Margin="20,0,20,20" Padding="20">
-                        <StackPanel>
                             <!-- 已安装版本选择 -->
-                            <TextBlock Text="选择游戏版本" Margin="0,0,0,8" Foreground="#555555" FontSize="13"/>
-                            <DockPanel LastChildFill="True" Margin="0,0,0,15">
-                                <Button x:Name="RefreshGameVersionsButton" Content="🔄" Width="45" Height="32" Margin="0,0,8,0" Click="RefreshVersions_Click" FontSize="14"/>
-                                <ComboBox x:Name="GameVersion" MinHeight="32" VerticalContentAlignment="Center" Padding="10,5" BorderBrush="#DDDDDD" BorderThickness="1" SelectionChanged="GameVersion_SelectionChanged"/>
+                            <TextBlock Text="选择游戏版本" Margin="0,0,0,8" Foreground="#555555" FontSize="13" HorizontalAlignment="Center"/>
+                            <DockPanel LastChildFill="True" Margin="0,0,0,20" Width="400">
+                                <Button x:Name="RefreshGameVersionsButton" Content="🔄" Width="45" Height="38" Margin="0,0,8,0" Click="RefreshVersions_Click" FontSize="14"/>
+                                <ComboBox x:Name="GameVersion" MinHeight="38" VerticalContentAlignment="Center" Padding="10,5" BorderBrush="#DDDDDD" BorderThickness="1" SelectionChanged="GameVersion_SelectionChanged" FontSize="13"/>
                             </DockPanel>
                             
                             <!-- 启动按钮 -->
-                            <Button x:Name="StartGame" Content="▶️ 开始游戏" MinHeight="45" 
+                            <Button x:Name="StartGame" Content="开始游戏" MinHeight="50" Width="400"
                                     Background="#0078D4" Foreground="White" 
-                                    BorderThickness="0" FontSize="15" FontWeight="Bold"
+                                    BorderThickness="0" FontSize="16" FontWeight="Bold"
                                     Click="StartGame_Click">
                                 <Button.Template>
                                     <ControlTemplate TargetType="Button">
-                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="15">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="20">
                                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Border>
                                     </ControlTemplate>
@@ -162,13 +162,13 @@
                             </Button>
                             
                             <!-- 进度条 -->
-                            <Grid Margin="0,10,0,0">
+                            <Grid Margin="0,15,0,0" Width="400">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <ProgressBar Grid.Column="0" x:Name="DownloadProgress" Height="6" Minimum="0" Maximum="100" Value="0" Foreground="#4CAF50"/>
-                                <TextBlock Grid.Column="1" x:Name="ProgressText" Text="就绪" FontSize="11" Foreground="#666666" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="0" x:Name="DownloadProgress" Height="8" Minimum="0" Maximum="100" Value="0" Foreground="#4CAF50"/>
+                                <TextBlock Grid.Column="1" x:Name="ProgressText" Text="就绪" FontSize="12" Foreground="#666666" Margin="10,0,0,0" VerticalAlignment="Center"/>
                             </Grid>
                         </StackPanel>
                     </Border>
@@ -183,7 +183,7 @@
                     </Grid.RowDefinitions>
                     
                     <!-- 标题 -->
-                    <TextBlock Grid.Row="0" Text="📥 下载游戏" FontSize="20" FontWeight="Bold" Margin="25,20,25,15" Foreground="#333333"/>
+                    <TextBlock Grid.Row="0" Text="📥 下载游戏(首次下载速度可能比较慢请耐心等待)" FontSize="20" FontWeight="Bold" Margin="25,20,25,15" Foreground="#333333"/>
                     
                     <!-- 下载配置 -->
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
@@ -219,6 +219,20 @@
                             <Button x:Name="InstallVanillaButton" Content="📥 开始下载" MinHeight="45" 
                                     Background="#4CAF50" Foreground="White" BorderThickness="0" FontSize="15" FontWeight="Bold"
                                     Click="InstallVanilla_Click">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="15">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                            
+                            <!-- 取消按钮 -->
+                            <Button x:Name="CancelButton" Content="❌ 取消下载" MinHeight="45" 
+                                    Background="#F44336" Foreground="White" BorderThickness="0" FontSize="15" FontWeight="Bold"
+                                    Visibility="Collapsed"
+                                    Click="CancelDownload_Click">
                                 <Button.Template>
                                     <ControlTemplate TargetType="Button">
                                         <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="15">
@@ -414,10 +428,7 @@
                             <Border Background="#F5F5F5" CornerRadius="6" Padding="15" Margin="0,0,0,15">
                                 <StackPanel>
                                     <TextBlock Text="🔧 其他设置" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#333333"/>
-                                    <CheckBox x:Name="FullScreen" Content="全屏模式启动" FontSize="12" Margin="0,5,0,10"/>
-                                    <TextBlock Text="离线昵称" FontSize="12" Foreground="#666666" Margin="0,0,0,5"/>
-                                    <TextBox x:Name="PlayerName" MinHeight="30" VerticalContentAlignment="Center" 
-                                             Padding="8,5" BorderBrush="#DDDDDD" BorderThickness="1" FontSize="12"/>
+                                    <CheckBox x:Name="FullScreen" Content="全屏模式启动" FontSize="12" Margin="0,5,0,0"/>
                                 </StackPanel>
                             </Border>
                             
@@ -437,19 +448,124 @@
                     </ScrollViewer>
                 </Grid>
                 
+                <!-- 账号界面 -->
+                <Grid x:Name="AccountPage" Visibility="Collapsed">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="25">
+                            <TextBlock Text="👤 账号管理" FontSize="20" FontWeight="Bold" Margin="0,0,0,20" Foreground="#333333"/>
+                            
+                            <!-- 账号类型选择 -->
+                            <Border Background="#FFF3E0" CornerRadius="6" Padding="15" Margin="0,0,0,15">
+                                <StackPanel>
+                                    <TextBlock Text="🔑 选择登录方式" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#333333"/>
+                                    <RadioButton x:Name="OfflineModeRadio" Content="离线模式" FontSize="13" IsChecked="True" Margin="0,0,0,8" Checked="OfflineModeRadio_Checked"/>
+                                    <RadioButton x:Name="OnlineModeRadio" Content="正版验证（微软账号）" FontSize="13" Checked="OnlineModeRadio_Checked"/>
+                                </StackPanel>
+                            </Border>
+                            
+                            <!-- 离线账号设置 -->
+                            <Border x:Name="OfflineAccountPanel" Background="#F5F5F5" CornerRadius="6" Padding="15" Margin="0,0,0,15">
+                                <StackPanel>
+                                    <TextBlock Text="🎮 离线账号" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#333333"/>
+                                    <TextBlock Text="离线模式无需正版账号，输入昵称即可游戏" FontSize="12" Foreground="#666666" Margin="0,0,0,10"/>
+                                    <TextBlock Text="离线昵称" FontSize="12" Foreground="#666666" Margin="0,0,0,5"/>
+                                    <TextBox x:Name="PlayerName" MinHeight="35" VerticalContentAlignment="Center" 
+                                             Padding="10,5" BorderBrush="#DDDDDD" BorderThickness="1" FontSize="13" Margin="0,0,0,10"/>
+                                    <TextBlock Text="💡 提示：昵称仅用于离线模式，无法使用皮肤和正版服务器" FontSize="11" Foreground="#999999"/>
+                                </StackPanel>
+                            </Border>
+                            
+                            <!-- 正版验证设置 -->
+                            <Border x:Name="OnlineAccountPanel" Background="#E8F5E9" CornerRadius="6" Padding="15" Margin="0,0,0,15" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Text="🔐 正版验证" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#333333"/>
+                                    <TextBlock Text="使用微软账号登录，支持皮肤和正版服务器" FontSize="12" Foreground="#666666" Margin="0,0,0,10"/>
+                                    <Button x:Name="MicrosoftLoginButton" Content="🔑 微软账号登录" MinHeight="40"
+                                            Background="#0078D4" Foreground="White" 
+                                            BorderThickness="0" FontSize="14" FontWeight="Bold"
+                                            Click="MicrosoftLoginButton_Click">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="15">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                    </Button>
+                                    <TextBlock x:Name="LoginStatusText" Text="" FontSize="12" Foreground="#666666" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            
+                            <!-- 账号信息 -->
+                            <Border Background="#E3F2FD" CornerRadius="6" Padding="15" Margin="0,0,0,15">
+                                <StackPanel>
+                                    <TextBlock Text="ℹ️ 当前账号信息" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#1976D2"/>
+                                    <TextBlock x:Name="CurrentAccountInfo" Text="模式：离线模式" FontSize="13" Foreground="#333333"/>
+                                    <TextBlock x:Name="CurrentPlayerName" Text="昵称：未设置" FontSize="13" Foreground="#333333" Margin="0,5,0,0"/>
+                                    <TextBlock x:Name="CurrentPlayerUuid" Text="" FontSize="11" Foreground="#999999" Margin="0,5,0,0" Visibility="Collapsed"/>
+                                </StackPanel>
+                            </Border>
+                            
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                                <Button x:Name="SaveAccountButton" Content="💾 保存离线昵称" Width="150" Height="38" 
+                                        Background="#4CAF50" Foreground="White" 
+                                        BorderThickness="0" FontSize="13" FontWeight="Bold"
+                                        HorizontalAlignment="Left" Click="SaveAccountButton_Click" Margin="0,0,10,0">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="12">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                                <Button x:Name="DeleteAccountButton" Content="🗑️ 删除账号" Width="120" Height="38" 
+                                        Background="#F44336" Foreground="White" 
+                                        BorderThickness="0" FontSize="13" FontWeight="Bold"
+                                        HorizontalAlignment="Left" Click="DeleteAccountButton_Click">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="12">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+                
                 <!-- 更多界面 -->
                 <Grid x:Name="MorePage" Visibility="Collapsed">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="25">
-                            <TextBlock Text="ℹ️ 关于" FontSize="20" FontWeight="Bold" Margin="0,0,0,20" Foreground="#333333"/>
+                            <TextBlock Text="ℹ️ 更多" FontSize="20" FontWeight="Bold" Margin="0,0,0,20" Foreground="#333333"/>
+                            
+                            <!-- 公告栏 -->
+                            <Border Background="#E3F2FD" CornerRadius="6" Padding="15" Margin="0,0,0,15">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    
+                                    <TextBlock Grid.Row="0" Text="📢 公告" FontSize="14" FontWeight="Bold" Foreground="#1976D2" Margin="0,0,0,8"/>
+                                    <Border Grid.Row="1" Background="White" CornerRadius="4" Padding="12">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="150">
+                                            <TextBlock x:Name="AnnouncementText" TextWrapping="Wrap" Foreground="#333333" FontSize="12" LineHeight="20"/>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Grid>
+                            </Border>
                             
                             <!-- 启动器信息 -->
+                            <TextBlock Text="ℹ️ 关于启动器" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#555555"/>
                             <Border Background="#F5F5F5" CornerRadius="6" Padding="15" Margin="0,0,0,15">
                                 <StackPanel>
-                                    <TextBlock Text="🎮 Minecraft 启动器" FontSize="18" FontWeight="Bold" Foreground="#333333"/>
-                                    <TextBlock Text="版本：1.0.0" FontSize="13" Foreground="#666666" Margin="0,5,0,0"/>
+                                    <TextBlock Text="🎮 JCL 启动器" FontSize="18" FontWeight="Bold" Foreground="#333333"/>
                                     <TextBlock Text="基于 StarLight_Core 开发" FontSize="13" Foreground="#666666" Margin="0,3,0,0"/>
-                                    <TextBlock Text="最后更新：2026 年 3 月" FontSize="12" Foreground="#999999" Margin="0,3,0,0"/>
+                                    <TextBlock Text="开发时间：2026 年 3 月" FontSize="12" Foreground="#999999" Margin="0,3,0,0"/>
                                 </StackPanel>
                             </Border>
                             
@@ -459,7 +575,7 @@
                                 <StackPanel>
                                     <TextBlock Text="这是一个现代化的 Minecraft 启动器，具有以下特点：" FontSize="13" Foreground="#333333" Margin="0,0,0,8"/>
                                     <TextBlock Text="✨ 功能特性" FontSize="13" FontWeight="Bold" Foreground="#1976D2" Margin="0,0,0,5"/>
-                                    <TextBlock Text="✓ 支持离线模式，无需正版账号即可游戏" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
+                                    <TextBlock Text="✓ 支持离线模式，支持正版账号" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="✓ 自动选择适配的 Java 版本，无需手动配置" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="✓ 使用 BMCLAPI 镜像源，国内高速下载" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="✓ 支持多版本管理，可安装正式版和测试版" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
@@ -478,7 +594,7 @@
                                 <StackPanel>
                                     <TextBlock Text="开发者：jingoujiao" FontSize="13" FontWeight="Bold" Foreground="#333333" Margin="0,0,0,5"/>
                                     <TextBlock Text="GitHub: jingoujiao" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
-                                    <TextBlock Text="网站：jingoujiao.github.io" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
+                                    <TextBlock Text="QQ:1494959379" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="🎮 热爱 Minecraft 的开发者" FontSize="12" Foreground="#999999" Margin="0,8,0,0" FontStyle="Italic"/>
                                     <TextBlock Text="感谢使用本启动器！" FontSize="12" Foreground="#666666" Margin="0,3,0,0"/>
                                 </StackPanel>
@@ -491,7 +607,7 @@
                                     <TextBlock Text="如遇到问题，请通过以下方式获取帮助：" FontSize="12" Foreground="#333333" Margin="0,0,0,8"/>
                                     <TextBlock Text="📧 联系方式" FontSize="13" FontWeight="Bold" Foreground="#2E7D32" Margin="0,0,0,5"/>
                                     <TextBlock Text="• GitHub Issues: 提交问题反馈" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
-                                    <TextBlock Text="• 个人网站：jingoujiao.github.io" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
+                                    <TextBlock Text="• 邮箱:jingoujiao@qq.com" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="📄 开源协议" FontSize="13" FontWeight="Bold" Foreground="#2E7D32" Margin="0,8,0,5"/>
                                     <TextBlock Text="本项目使用 MIT 许可证开源" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="欢迎贡献代码或提出建议！" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>

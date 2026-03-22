@@ -32,6 +32,14 @@ namespace MinecraftLuanch
     {
         private DateTime _lastRootChange = DateTime.MinValue;
         private string? _currentVersion;
+        
+        private bool _isOnlineMode = false;
+        private GetTokenResponse? _cachedTokenInfo;
+        private string? _cachedPlayerName;
+        private bool _isInitialized = false;
+        
+        private const string MicrosoftClientId = "e1e383f9-59d9-4aa2-bf5e-73fe83b15ba0";
+        
         private Dictionary<string, int> _versionJavaRequirements = new()
         {
             // Minecraft 版本 -> 所需的最低 Java 版本
@@ -58,23 +66,14 @@ namespace MinecraftLuanch
         {
             InitializeComponent();
             
-            // 自动定位到启动器目录下的 .minecraft 文件夹
-            var appPath = AppDomain.CurrentDomain.BaseDirectory;
-            var defaultMinecraftPath = Path.Combine(appPath, ".minecraft");
-            
-            // 如果启动器目录下没有 .minecraft，则使用 AppData 中的
-            if (!Directory.Exists(defaultMinecraftPath))
-            {
-                defaultMinecraftPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    ".minecraft"
-                );
-            }
+            var defaultMinecraftPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                ".minecraft"
+            );
             
             GameRoot.Text = defaultMinecraftPath;
             CurrentGameRoot.Text = defaultMinecraftPath;
 
-            // 加载保存的配置
             LoadSettingsFromFile();
 
             RefreshVersions();
@@ -85,6 +84,23 @@ namespace MinecraftLuanch
             
             // 加载公告
             _ = LoadAnnouncementAsync();
+            
+            _isInitialized = true;
+            
+            if (_isOnlineMode)
+            {
+                OfflineModeRadio.IsChecked = false;
+                OnlineModeRadio.IsChecked = true;
+                OfflineAccountPanel.Visibility = Visibility.Collapsed;
+                OnlineAccountPanel.Visibility = Visibility.Visible;
+                SaveAccountButton.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                SaveAccountButton.Visibility = Visibility.Visible;
+            }
+            
+            UpdateAccountInfo();
         }
 
         /// <summary>
@@ -374,12 +390,6 @@ namespace MinecraftLuanch
 
         private void GameRoot_TextChanged(object sender, TextChangedEventArgs e)
         {
-            // 防止循环触发
-            if (_lastRootChange + TimeSpan.FromMilliseconds(100) > DateTime.Now)
-                return;
-
-            RefreshVersions();
-            _lastRootChange = DateTime.Now;
         }
 
         private void RefreshVersions()
@@ -448,6 +458,7 @@ namespace MinecraftLuanch
             LaunchPage.Visibility = Visibility.Collapsed;
             DownloadPage.Visibility = Visibility.Collapsed;
             VersionsPage.Visibility = Visibility.Collapsed;
+            AccountPage.Visibility = Visibility.Collapsed;
             SettingsPage.Visibility = Visibility.Collapsed;
             MorePage.Visibility = Visibility.Collapsed;
 
@@ -458,14 +469,17 @@ namespace MinecraftLuanch
                     LaunchButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
                     VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
+                    RefreshVersions();
                     break;
                 case "Download":
                     DownloadPage.Visibility = Visibility.Visible;
                     LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
                     DownloadButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
                     break;
@@ -474,6 +488,17 @@ namespace MinecraftLuanch
                     LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
                     DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
                     VersionsButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
+                    SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    MoreButton.Background = System.Windows.Media.Brushes.Transparent;
+                    break;
+                case "Account":
+                    AccountPage.Visibility = Visibility.Visible;
+                    UpdateAccountInfo();
+                    LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
+                    DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
+                    VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
                     break;
@@ -483,6 +508,7 @@ namespace MinecraftLuanch
                     LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
                     DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
                     VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
                     break;
@@ -491,6 +517,7 @@ namespace MinecraftLuanch
                     LaunchButton.Background = System.Windows.Media.Brushes.Transparent;
                     DownloadButton.Background = System.Windows.Media.Brushes.Transparent;
                     VersionsButton.Background = System.Windows.Media.Brushes.Transparent;
+                    AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212));
                     break;
@@ -507,6 +534,17 @@ namespace MinecraftLuanch
             SwitchPage("Download");
         }
 
+        private void VersionsButton_Click(object sender, RoutedEventArgs e)
+        {
+            SwitchPage("Versions");
+            RefreshVersionsList();
+        }
+
+        private void AccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            SwitchPage("Account");
+        }
+
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
             SwitchPage("Settings");
@@ -517,10 +555,185 @@ namespace MinecraftLuanch
             SwitchPage("More");
         }
 
-        private void VersionsButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 更新账号信息显示
+        /// </summary>
+        private void UpdateAccountInfo()
         {
-            SwitchPage("Versions");
-            RefreshVersionsList();
+            if (_isOnlineMode)
+            {
+                CurrentAccountInfo.Text = "模式：正版验证（微软账号）";
+                CurrentPlayerName.Text = string.IsNullOrEmpty(_cachedPlayerName) 
+                    ? "昵称：未登录" 
+                    : $"昵称：{_cachedPlayerName}";
+                CurrentPlayerUuid.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                CurrentAccountInfo.Text = "模式：离线模式";
+                var playerName = PlayerName.Text?.Trim();
+                CurrentPlayerName.Text = string.IsNullOrWhiteSpace(playerName) 
+                    ? "昵称：未设置" 
+                    : $"昵称：{playerName}";
+                CurrentPlayerUuid.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        /// <summary>
+        /// 离线模式选择
+        /// </summary>
+        private void OfflineModeRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!_isInitialized) return;
+            _isOnlineMode = false;
+            OfflineAccountPanel.Visibility = Visibility.Visible;
+            OnlineAccountPanel.Visibility = Visibility.Collapsed;
+            SaveAccountButton.Visibility = Visibility.Visible;
+            UpdateAccountInfo();
+        }
+
+        /// <summary>
+        /// 正版模式选择
+        /// </summary>
+        private void OnlineModeRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!_isInitialized) return;
+            _isOnlineMode = true;
+            OfflineAccountPanel.Visibility = Visibility.Collapsed;
+            OnlineAccountPanel.Visibility = Visibility.Visible;
+            SaveAccountButton.Visibility = Visibility.Collapsed;
+            UpdateAccountInfo();
+        }
+
+        /// <summary>
+        /// 微软账号登录
+        /// </summary>
+        private async void MicrosoftLoginButton_Click(object sender, RoutedEventArgs e)
+        {
+            await Dispatcher.InvokeAsync(() => MicrosoftLoginButton.IsEnabled = false);
+            await Dispatcher.InvokeAsync(() => LoginStatusText.Text = "正在启动登录流程...");
+            
+            try
+            {
+                var auth = new MicrosoftAuthentication(MicrosoftClientId);
+                var deviceCodeInfo = await auth.RetrieveDeviceCodeInfo();
+                
+                await Dispatcher.InvokeAsync(() => 
+                    LoginStatusText.Text = $"正在打开浏览器...\n\n验证代码: {deviceCodeInfo.UserCode}\n\n请在浏览器中完成登录");
+                
+                System.Windows.Clipboard.SetText(deviceCodeInfo.UserCode);
+                
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = deviceCodeInfo.VerificationUri,
+                        UseShellExecute = true
+                    });
+                    MessageBox.Show($"验证代码已复制到剪贴板！\n\n代码: {deviceCodeInfo.UserCode}\n\n浏览器已打开，请在浏览器中粘贴代码并完成登录。", 
+                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception)
+                {
+                    MessageBox.Show($"无法自动打开浏览器，验证代码已复制到剪贴板。\n\n请手动访问：{deviceCodeInfo.VerificationUri}\n输入代码：{deviceCodeInfo.UserCode}", 
+                        "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                
+                var tokenInfo = await auth.GetTokenResponse(deviceCodeInfo);
+                var userInfo = await auth.MicrosoftAuthAsync(tokenInfo, progress =>
+                {
+                    Dispatcher.InvokeAsync(() => LoginStatusText.Text = progress);
+                });
+                
+                if (userInfo != null && !string.IsNullOrEmpty(userInfo.AccessToken))
+                {
+                    _cachedTokenInfo = tokenInfo;
+                    _cachedPlayerName = userInfo.Name;
+                    _isOnlineMode = true;
+                    
+                    AppendLog($"登录成功 - AccessToken长度: {tokenInfo?.AccessToken?.Length ?? 0}, RefreshToken长度: {tokenInfo?.RefreshToken?.Length ?? 0}");
+                    
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        LoginStatusText.Text = $"登录成功！\n玩家：{userInfo.Name}";
+                        UpdateAccountInfo();
+                    });
+                    
+                    SaveSettingsToFile();
+                    
+                    MessageBox.Show($"微软账号登录成功！\n\n玩家名称：{userInfo.Name}\nUUID：{userInfo.Uuid}\n\n账号信息已自动保存。", 
+                        "登录成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    await Dispatcher.InvokeAsync(() => LoginStatusText.Text = "登录失败：未获取到有效的访问令牌");
+                    MessageBox.Show("登录失败，请重试。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                await Dispatcher.InvokeAsync(() => LoginStatusText.Text = $"登录失败：{ex.Message}");
+                MessageBox.Show($"登录失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                await Dispatcher.InvokeAsync(() => MicrosoftLoginButton.IsEnabled = true);
+            }
+        }
+
+        /// <summary>
+        /// 保存账号设置
+        /// </summary>
+        private void SaveAccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isOnlineMode)
+            {
+                if (_cachedTokenInfo == null)
+                {
+                    MessageBox.Show("请先登录微软账号！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+            }
+            else
+            {
+                var playerName = PlayerName.Text?.Trim();
+                if (string.IsNullOrWhiteSpace(playerName))
+                {
+                    MessageBox.Show("请输入离线昵称！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+            }
+
+            UpdateAccountInfo();
+            SaveSettingsToFile();
+            MessageBox.Show("账号设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>
+        /// 删除账号
+        /// </summary>
+        private void DeleteAccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show("确定要删除当前账号信息吗？\n\n删除后需要重新登录。", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            
+            if (result == MessageBoxResult.Yes)
+            {
+                _isOnlineMode = false;
+                _cachedTokenInfo = null;
+                _cachedPlayerName = null;
+                PlayerName.Text = "";
+                
+                OfflineModeRadio.IsChecked = true;
+                OnlineModeRadio.IsChecked = false;
+                OfflineAccountPanel.Visibility = Visibility.Visible;
+                OnlineAccountPanel.Visibility = Visibility.Collapsed;
+                
+                LoginStatusText.Text = "";
+                UpdateAccountInfo();
+                SaveSettingsToFile();
+                
+                MessageBox.Show("账号已删除！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
         }
 
         /// <summary>
@@ -955,7 +1168,6 @@ namespace MinecraftLuanch
         {
             try
             {
-                // 验证内存设置
                 if (!int.TryParse(MaxMemory.Text, out var maxMem))
                 {
                     MessageBox.Show("内存设置必须是数字！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -974,15 +1186,17 @@ namespace MinecraftLuanch
                     return;
                 }
 
-                // 验证昵称
                 if (string.IsNullOrWhiteSpace(PlayerName.Text))
                 {
                     MessageBox.Show("请输入离线昵称！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
 
-                // 保存到配置文件
                 SaveSettingsToFile();
+                
+                GameRoot.Text = CurrentGameRoot.Text;
+                RefreshVersions();
+                RefreshJava();
 
                 MessageBox.Show("设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
             }
@@ -1007,6 +1221,15 @@ namespace MinecraftLuanch
                 config.AppendLine($"MaxMemory={MaxMemory.Text}");
                 config.AppendLine($"PlayerName={PlayerName.Text}");
                 config.AppendLine($"FullScreen={FullScreen.IsChecked}");
+                config.AppendLine($"IsOnlineMode={_isOnlineMode}");
+                
+                if (_isOnlineMode && _cachedTokenInfo != null)
+                {
+                    AppendLog($"保存Token - AccessToken: {(_cachedTokenInfo.AccessToken?.Length > 20 ? _cachedTokenInfo.AccessToken.Substring(0, 20) + "..." : "null")}, RefreshToken: {(_cachedTokenInfo.RefreshToken?.Length > 20 ? _cachedTokenInfo.RefreshToken.Substring(0, 20) + "..." : "null")}");
+                    config.AppendLine($"AccessToken={_cachedTokenInfo.AccessToken}");
+                    config.AppendLine($"RefreshToken={_cachedTokenInfo.RefreshToken}");
+                    config.AppendLine($"PlayerNameOnline={_cachedPlayerName}");
+                }
 
                 File.WriteAllText(configPath, config.ToString());
                 AppendLog("设置已保存到配置文件");
@@ -1030,6 +1253,10 @@ namespace MinecraftLuanch
                 if (File.Exists(configPath))
                 {
                     var config = File.ReadAllLines(configPath);
+                    string? accessToken = null;
+                    string? refreshToken = null;
+                    string? playerNameOnline = null;
+                    
                     foreach (var line in config)
                     {
                         var parts = line.Split('=', 2);
@@ -1056,9 +1283,40 @@ namespace MinecraftLuanch
                                         FullScreen.IsChecked = fullScreen;
                                     }
                                     break;
+                                case "IsOnlineMode":
+                                    if (bool.TryParse(value, out var isOnline))
+                                    {
+                                        _isOnlineMode = isOnline;
+                                    }
+                                    break;
+                                case "AccessToken":
+                                    accessToken = value;
+                                    break;
+                                case "RefreshToken":
+                                    refreshToken = value;
+                                    break;
+                                case "PlayerNameOnline":
+                                    playerNameOnline = value;
+                                    break;
                             }
                         }
                     }
+                    
+                    if (_isOnlineMode && !string.IsNullOrEmpty(accessToken) && !string.IsNullOrEmpty(refreshToken))
+                    {
+                        _cachedTokenInfo = new GetTokenResponse
+                        {
+                            AccessToken = accessToken,
+                            RefreshToken = refreshToken
+                        };
+                        _cachedPlayerName = playerNameOnline;
+                        AppendLog($"加载Token成功 - AccessToken长度: {accessToken.Length}, RefreshToken长度: {refreshToken.Length}");
+                    }
+                    else if (_isOnlineMode)
+                    {
+                        AppendLog($"警告: 在线模式但Token为空 - AccessToken: {(string.IsNullOrEmpty(accessToken) ? "空" : "有值")}, RefreshToken: {(string.IsNullOrEmpty(refreshToken) ? "空" : "有值")}");
+                    }
+                    
                     AppendLog("已从配置文件加载设置");
                 }
             }
@@ -1075,11 +1333,22 @@ namespace MinecraftLuanch
             {
                 LogBox.Clear();
 
-                var playerName = PlayerName.Text?.Trim();
-                if (string.IsNullOrWhiteSpace(playerName))
+                if (_isOnlineMode)
                 {
-                    MessageBox.Show("请输入离线昵称。");
-                    return;
+                    if (_cachedTokenInfo == null)
+                    {
+                        MessageBox.Show("请先在账号管理中登录微软账号。");
+                        return;
+                    }
+                }
+                else
+                {
+                    var playerName = PlayerName.Text?.Trim();
+                    if (string.IsNullOrWhiteSpace(playerName))
+                    {
+                        MessageBox.Show("请输入离线昵称。");
+                        return;
+                    }
                 }
 
                 var root = GameRoot.Text?.Trim();
@@ -1146,7 +1415,50 @@ namespace MinecraftLuanch
                     return;
                 }
 
-                var account = new OfflineAuthentication(playerName).OfflineAuth(); // 离线认证
+                dynamic account;
+                if (_isOnlineMode && _cachedTokenInfo != null)
+                {
+                    try
+                    {
+                        var msAuth = new MicrosoftAuthentication(MicrosoftClientId);
+                        account = await msAuth.MicrosoftAuthAsync(_cachedTokenInfo, progress =>
+                        {
+                            Dispatcher.InvokeAsync(() => AppendLog(progress));
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendLog($"微软认证失败: {ex.Message}");
+                        var result = MessageBox.Show(
+                            $"微软账号认证失败：{ex.Message}\n\n是否切换到离线模式继续游戏？",
+                            "认证失败",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Error);
+                        
+                        if (result == MessageBoxResult.Yes)
+                        {
+                            _isOnlineMode = false;
+                            OfflineModeRadio.IsChecked = true;
+                            OnlineModeRadio.IsChecked = false;
+                            OfflineAccountPanel.Visibility = Visibility.Visible;
+                            OnlineAccountPanel.Visibility = Visibility.Collapsed;
+                            SaveAccountButton.Visibility = Visibility.Visible;
+                            
+                            var playerName = PlayerName.Text?.Trim() ?? "Player";
+                            account = new OfflineAuthentication(playerName).OfflineAuth();
+                        }
+                        else
+                        {
+                            StartGame.IsEnabled = true;
+                            return;
+                        }
+                    }
+                }
+                else
+                {
+                    var playerName = PlayerName.Text?.Trim() ?? "Player";
+                    account = new OfflineAuthentication(playerName).OfflineAuth();
+                }
 
                 LaunchConfig args = new() // 配置启动参数
                 {
@@ -1289,9 +1601,15 @@ namespace MinecraftLuanch
             }
         }
 
+        private CancellationTokenSource? _installCts;
+        private string? _installingVersion;
+        private string? _installingRoot;
+
         private async void InstallVanilla_Click(object sender, RoutedEventArgs e)
         {
             InstallVanillaButton.IsEnabled = false;
+            CancelButton.Visibility = Visibility.Visible;
+            
             try
             {
                 var root = GameRoot.Text?.Trim();
@@ -1301,7 +1619,6 @@ namespace MinecraftLuanch
                     return;
                 }
 
-                // 从 ComboBox 获取选择的版本号
                 var targetVersion = InstallVersion.SelectedItem as string;
                 if (string.IsNullOrWhiteSpace(targetVersion))
                 {
@@ -1312,11 +1629,12 @@ namespace MinecraftLuanch
                 AppendLog($"开始安装原版：{targetVersion} 到 {root}");
                 AppendLog("使用 BMCLAPI 镜像源进行下载（国内高速）");
 
-                using var cts = new CancellationTokenSource();
+                _installCts = new CancellationTokenSource();
+                _installingVersion = targetVersion;
+                _installingRoot = root;
 
                 try
                 {
-                    // 使用 BMCLAPI 镜像源安装
                     var installer = new BmclApiInstaller(targetVersion, root, 
                         (status, progress) =>
                         {
@@ -1333,13 +1651,34 @@ namespace MinecraftLuanch
                         });
 
                     AppendLog("开始下载和安装...");
-                    await installer.InstallAsync(cts.Token);
+                    await installer.InstallAsync(_installCts.Token);
 
                     AppendLog("原版安装完成。");
                     AppendLog($"请检查目录：{Path.Combine(root, "versions", targetVersion)}");
                     RefreshVersions();
                     
                     MessageBox.Show($"版本 {targetVersion} 安装成功！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (OperationCanceledException)
+                {
+                    AppendLog("下载已取消");
+                    AppendLog("正在清理已下载的文件...");
+                    
+                    try
+                    {
+                        var versionDir = Path.Combine(root, "versions", targetVersion);
+                        if (Directory.Exists(versionDir))
+                        {
+                            Directory.Delete(versionDir, true);
+                            AppendLog($"已删除版本目录: {versionDir}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendLog($"清理文件失败: {ex.Message}");
+                    }
+                    
+                    MessageBox.Show("下载已取消", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 catch (Exception ex)
                 {
@@ -1350,8 +1689,14 @@ namespace MinecraftLuanch
                     {
                         AppendLog($"内部异常：{ex.InnerException.Message}");
                     }
+                    
                     MessageBox.Show($"安装原版时发生异常：\n{ex.Message}\n\n请检查：\n1. 网络连接是否正常\n2. 版本号是否正确（如 1.21.1）\n3. 游戏目录是否有写入权限");
-                    return;
+                }
+                finally
+                {
+                    InstallVanillaButton.IsEnabled = true;
+                    CancelButton.Visibility = Visibility.Collapsed;
+                    _installCts?.Dispose();
                 }
             }
             catch (Exception ex)
@@ -1363,6 +1708,16 @@ namespace MinecraftLuanch
             finally
             {
                 InstallVanillaButton.IsEnabled = true;
+                CancelButton.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void CancelDownload_Click(object sender, RoutedEventArgs e)
+        {
+            if (_installCts != null && !_installCts.IsCancellationRequested)
+            {
+                _installCts.Cancel();
+                AppendLog("正在取消下载...");
             }
         }
     }

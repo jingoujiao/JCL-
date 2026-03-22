@@ -28,6 +28,26 @@ namespace MinecraftLuanch
     {
         private static readonly string BmclApiBase = "https://bmclapi2.bangbang93.com";
         
+        private static readonly HttpClient _sharedHttpClient;
+        
+        static BmclApiInstaller()
+        {
+            var handler = new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+                MaxConnectionsPerServer = 64,
+                EnableMultipleHttp2Connections = true
+            };
+            
+            _sharedHttpClient = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromMinutes(5)
+            };
+            
+            _sharedHttpClient.DefaultRequestHeaders.Add("User-Agent", "MinecraftLauncher/1.0");
+        }
+        
         private readonly string _version;
         private readonly string _minecraftRoot;
         private readonly Action<string, string>? _onProgress;
@@ -46,18 +66,13 @@ namespace MinecraftLuanch
         /// </summary>
         public static async Task<List<MinecraftVersionInfo>> GetVersionListAsync()
         {
-            using var httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(30)
-            };
-
             // 优先尝试从 BMCLAPI 获取版本列表（BMCLAPI 有版本列表镜像）
             // 尝试使用 BMCLAPI 的 /mc/game/version_manifest.json 镜像
             var bmclApiManifestUrl = $"{BmclApiBase}/mc/game/version_manifest.json";
             
             try
             {
-                var response = await httpClient.GetAsync(bmclApiManifestUrl);
+                var response = await _sharedHttpClient.GetAsync(bmclApiManifestUrl);
                 response.EnsureSuccessStatusCode();
 
                 var json = await response.Content.ReadAsStringAsync();
@@ -289,12 +304,7 @@ namespace MinecraftLuanch
             {
                 // 尝试直接下载版本 JSON 来验证版本是否存在
                 var url = $"{BmclApiBase}/version/{_version}/{_version}.json";
-                using var httpClient = new HttpClient
-                {
-                    Timeout = TimeSpan.FromSeconds(10)
-                };
-                
-                var response = await httpClient.GetAsync(url, cancellationToken);
+                var response = await _sharedHttpClient.GetAsync(url, cancellationToken);
                 return response.IsSuccessStatusCode;
             }
             catch
@@ -395,8 +405,21 @@ namespace MinecraftLuanch
         private async Task DownloadAssetsAsync(JsonElement versionData, CancellationToken cancellationToken)
         {
             string? assetsIndexName = null;
+            string? assetIndexUrl = null;
             
-            if (versionData.TryGetProperty("assets", out var assetsElement))
+            if (versionData.TryGetProperty("assetIndex", out var assetIndexElement))
+            {
+                if (assetIndexElement.TryGetProperty("id", out var idElement))
+                {
+                    assetsIndexName = idElement.GetString();
+                }
+                if (assetIndexElement.TryGetProperty("url", out var urlElement))
+                {
+                    assetIndexUrl = urlElement.GetString();
+                }
+            }
+            
+            if (string.IsNullOrEmpty(assetsIndexName) && versionData.TryGetProperty("assets", out var assetsElement))
             {
                 assetsIndexName = assetsElement.GetString();
             }
@@ -412,7 +435,6 @@ namespace MinecraftLuanch
             var assetsDir = Path.Combine(_minecraftRoot, "assets");
             Directory.CreateDirectory(assetsDir);
 
-            // 下载 assets index
             var indexesDir = Path.Combine(assetsDir, "indexes");
             Directory.CreateDirectory(indexesDir);
             var indexJsonPath = Path.Combine(indexesDir, $"{assetsIndexName}.json");
@@ -421,13 +443,19 @@ namespace MinecraftLuanch
             {
                 AppendLog($"需要下载资源索引: {assetsIndexName}.json");
                 
-                // 尝试多个 URL 格式下载 assets index
-                string[] indexUrls = new string[]
+                var indexUrls = new List<string>();
+                
+                if (!string.IsNullOrEmpty(assetIndexUrl))
                 {
-                    $"{BmclApiBase}/assets/indexes/{assetsIndexName}.json",
-                    $"https://launchermeta.mojang.com/mc/game/assets/indexes/{assetsIndexName}.json",
-                    $"https://bmclapi2.bangbang93.com/assets/indexes/{assetsIndexName}.json",
-                };
+                    var bmclUrl = assetIndexUrl
+                        .Replace("https://launchermeta.mojang.com", BmclApiBase)
+                        .Replace("https://piston-meta.mojang.com", BmclApiBase);
+                    indexUrls.Add(bmclUrl);
+                    indexUrls.Add(assetIndexUrl);
+                }
+                
+                indexUrls.Add($"{BmclApiBase}/assets/indexes/{assetsIndexName}.json");
+                indexUrls.Add($"https://launchermeta.mojang.com/mc/game/assets/indexes/{assetsIndexName}.json");
 
                 bool indexDownloaded = false;
                 foreach (var url in indexUrls)
@@ -435,7 +463,7 @@ namespace MinecraftLuanch
                     try
                     {
                         AppendLog($"尝试从 {url} 下载资源索引");
-                        await DownloadFileAsync(url, indexJsonPath, cancellationToken);
+                        await DownloadFileWithRetryAsync(url, indexJsonPath, 5, cancellationToken);
                         AppendLog("资源索引下载成功");
                         indexDownloaded = true;
                         break;
@@ -457,7 +485,6 @@ namespace MinecraftLuanch
                 AppendLog($"使用已存在的资源索引: {assetsIndexName}.json");
             }
 
-            // 解析 assets index
             var indexJson = await File.ReadAllTextAsync(indexJsonPath, cancellationToken);
             using var indexDoc = JsonDocument.Parse(indexJson);
             
@@ -467,28 +494,15 @@ namespace MinecraftLuanch
                 return;
             }
 
-            // 下载 assets
             var objectsDir = Path.Combine(assetsDir, "objects");
             Directory.CreateDirectory(objectsDir);
 
-            int total = 0;
-            int downloaded = 0;
-            int failed = 0;
+            var assetsToDownload = new List<(string name, string hash, string prefix)>();
             
             foreach (var prop in objects.EnumerateObject())
             {
-                total++;
-            }
-
-            AppendLog($"共 {total} 个资源文件需要检查");
-
-            foreach (var prop in objects.EnumerateObject())
-            {
-                var resourceName = prop.Name;
                 if (!prop.Value.TryGetProperty("hash", out var hashElement))
-                {
                     continue;
-                }
 
                 var hash = hashElement.GetString();
                 if (string.IsNullOrEmpty(hash)) continue;
@@ -501,49 +515,173 @@ namespace MinecraftLuanch
                 
                 if (!File.Exists(assetPath))
                 {
-                    bool assetDownloaded = false;
-                    
-                    // 尝试多个 URL 格式
-                    string[] assetUrls = new string[]
-                    {
-                        $"{BmclApiBase}/assets/objects/{prefix}/{hash}",
-                        $"https://resources.download.minecraft.net/{prefix}/{hash}",
-                        $"https://bmclapi2.bangbang93.com/assets/objects/{prefix}/{hash}",
-                    };
-
-                    foreach (var url in assetUrls)
-                    {
-                        try
-                        {
-                            await DownloadFileAsync(url, assetPath, cancellationToken);
-                            assetDownloaded = true;
-                            break;
-                        }
-                        catch (Exception ex)
-                        {
-                            // 继续尝试下一个 URL
-                        }
-                    }
-
-                    if (!assetDownloaded)
-                    {
-                        failed++;
-                        if (failed <= 5)
-                        {
-                            AppendLog($"警告: 资源文件 {hash.Substring(0, 8)}... 下载失败");
-                        }
-                    }
-                }
-
-                downloaded++;
-                if (downloaded % 50 == 0 || downloaded == total)
-                {
-                    var progress = 60 + (downloaded * 10 / total);
-                    ReportProgress($"正在下载资源文件 ({downloaded}/{total})", $"{progress}%");
+                    assetsToDownload.Add((prop.Name, hash, prefix));
                 }
             }
 
-            AppendLog($"资源文件处理完成: {downloaded}/{total}, 失败: {failed}");
+            int total = assetsToDownload.Count;
+            if (total == 0)
+            {
+                AppendLog("所有资源文件已存在，无需下载");
+                return;
+            }
+
+            AppendLog($"共 {total} 个资源文件需要下载");
+
+            int downloaded = 0;
+            int failed = 0;
+            var failedAssets = new List<string>();
+            
+            var semaphore = new SemaphoreSlim(32);
+            var tasks = new List<Task>();
+
+            foreach (var (name, hash, prefix) in assetsToDownload)
+            {
+                await semaphore.WaitAsync(cancellationToken);
+                
+                var task = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var assetDir = Path.Combine(objectsDir, prefix);
+                        var assetPath = Path.Combine(assetDir, hash);
+                        
+                        string[] assetUrls = new string[]
+                        {
+                            $"{BmclApiBase}/assets/{prefix}/{hash}",
+                            $"https://resources.download.minecraft.net/{prefix}/{hash}",
+                        };
+
+                        bool success = false;
+                        Exception? lastEx = null;
+                        int retryCount = 0;
+                        
+                        foreach (var url in assetUrls)
+                        {
+                            retryCount++;
+                            try
+                            {
+                                await DownloadFileWithRetryAsync(url, assetPath, 5, cancellationToken);
+                                success = true;
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                lastEx = ex;
+                                if (File.Exists(assetPath))
+                                {
+                                    try { File.Delete(assetPath); } catch { }
+                                }
+                                if (retryCount == 1 && assetUrls.Length > 1)
+                                {
+                                    AppendLog($"BMCLAPI下载失败，尝试官方源: {name}");
+                                }
+                            }
+                        }
+
+                        if (!success)
+                        {
+                            lock (failedAssets)
+                            {
+                                failedAssets.Add(name);
+                                failed++;
+                            }
+                            if (failed <= 10)
+                            {
+                                AppendLog($"资源下载失败: {name} - {lastEx?.Message}");
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        Interlocked.Increment(ref downloaded);
+                        
+                        if (downloaded % 50 == 0 || downloaded == total)
+                        {
+                            var progress = 50 + (downloaded * 20 / total);
+                            ReportProgress($"正在下载资源文件 ({downloaded}/{total}, 失败: {failed})", $"{progress}%");
+                        }
+                    }
+                }, cancellationToken);
+                
+                tasks.Add(task);
+            }
+
+            await Task.WhenAll(tasks);
+
+            AppendLog($"资源文件下载完成: 成功 {total - failed}, 失败 {failed}");
+            
+            if (failed > 0)
+            {
+                AppendLog($"失败的资源文件列表（前20个）:");
+                foreach (var name in failedAssets.Take(20))
+                {
+                    AppendLog($"  - {name}");
+                }
+                AppendLog($"提示: 如果资源下载失败，可以尝试重新安装该版本，已下载的文件会被跳过");
+            }
+            
+            if (failed > total * 0.1)
+            {
+                AppendLog($"警告: 超过10%的资源文件下载失败，游戏可能无法正常运行");
+                AppendLog($"建议: 检查网络连接后重新安装该版本");
+            }
+        }
+
+        /// <summary>
+        /// 带重试的文件下载
+        /// </summary>
+        private async Task DownloadFileWithRetryAsync(string url, string savePath, int maxRetries, CancellationToken cancellationToken)
+        {
+            Exception? lastException = null;
+            
+            for (int i = 0; i < maxRetries; i++)
+            {
+                try
+                {
+                    using var response = await _sharedHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+
+                    var dir = Path.GetDirectoryName(savePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    var tempPath = savePath + ".tmp";
+                    
+                    using (var stream = await response.Content.ReadAsStreamAsync(cancellationToken))
+                    using (var fileStream = File.Create(tempPath))
+                    {
+                        var buffer = new byte[81920];
+                        int bytesRead;
+
+                        while ((bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+                        {
+                            await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                        }
+                    }
+                    
+                    if (File.Exists(savePath))
+                    {
+                        File.Delete(savePath);
+                    }
+                    File.Move(tempPath, savePath);
+                    
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    if (i < maxRetries - 1)
+                    {
+                        await Task.Delay(1000 * (i + 1), cancellationToken);
+                    }
+                }
+            }
+
+            throw lastException ?? new Exception($"下载失败：{url}");
         }
 
         /// <summary>
@@ -737,11 +875,6 @@ namespace MinecraftLuanch
         /// </summary>
         private async Task DownloadFileAsync(string url, string savePath, CancellationToken cancellationToken)
         {
-            using var httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromMinutes(5)
-            };
-
             // 添加重试逻辑
             int retries = 3;
             Exception? lastException = null;
@@ -750,7 +883,7 @@ namespace MinecraftLuanch
             {
                 try
                 {
-                    using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    using var response = await _sharedHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                     response.EnsureSuccessStatusCode();
 
                     var dir = Path.GetDirectoryName(savePath);
