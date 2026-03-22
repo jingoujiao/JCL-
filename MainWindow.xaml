@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:MinecraftLuanch"
         mc:Ignorable="d"
-        Title="Minecraft 启动器" Height="600" Width="1000" MinHeight="600" MinWidth="1000"
+        Title="JCL 启动器" Height="600" Width="1000" MinHeight="600" MinWidth="1000"
         WindowStartupLocation="CenterScreen"
         Background="#F5F5F5">
     
@@ -27,7 +27,7 @@
                 <!-- 启动器 Logo -->
                 <StackPanel Grid.Row="0" VerticalAlignment="Center" HorizontalAlignment="Center">
                     <TextBlock Text="⛏️" FontSize="24" HorizontalAlignment="Center"/>
-                    <TextBlock Text="启动器" FontSize="11" Foreground="#AAAAAA" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                    <TextBlock Text="JCL 启动器" FontSize="11" Foreground="#AAAAAA" HorizontalAlignment="Center" Margin="0,2,0,0"/>
                 </StackPanel>
                 
                 <!-- 导航按钮 -->
@@ -119,7 +119,7 @@
                 
                 <!-- 底部信息 -->
                 <StackPanel Grid.Row="2" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,8">
-                    <TextBlock Text="v1.1.0" FontSize="9" Foreground="#666666" HorizontalAlignment="Center"/>
+                    <TextBlock Text="v1.1.1" FontSize="9" Foreground="#666666" HorizontalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -137,7 +137,7 @@
                     <!-- 中央启动区域 -->
                     <Border Grid.Row="0" Background="#F9F9F9" CornerRadius="8" Margin="20" Padding="30">
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="500">
-                            <TextBlock Text="🎮 Minecraft 启动器" FontSize="28" FontWeight="Bold" 
+                            <TextBlock Text="🎮 JCL 启动器" FontSize="28" FontWeight="Bold" 
                                        Foreground="#333333" HorizontalAlignment="Center" Margin="0,0,0,30"/>
                             
                             <!-- 已安装版本选择 -->
@@ -148,7 +148,7 @@
                             </DockPanel>
                             
                             <!-- 启动按钮 -->
-                            <Button x:Name="StartGame" Content="▶️ 开始游戏" MinHeight="50" Width="400"
+                            <Button x:Name="StartGame" Content="开始游戏" MinHeight="50" Width="400"
                                     Background="#0078D4" Foreground="White" 
                                     BorderThickness="0" FontSize="16" FontWeight="Bold"
                                     Click="StartGame_Click">
@@ -563,10 +563,9 @@
                             <TextBlock Text="ℹ️ 关于启动器" FontSize="14" FontWeight="Bold" Margin="0,0,0,10" Foreground="#555555"/>
                             <Border Background="#F5F5F5" CornerRadius="6" Padding="15" Margin="0,0,0,15">
                                 <StackPanel>
-                                    <TextBlock Text="🎮 Minecraft 启动器" FontSize="18" FontWeight="Bold" Foreground="#333333"/>
-                                    <TextBlock Text="版本：1.0.0" FontSize="13" Foreground="#666666" Margin="0,5,0,0"/>
+                                    <TextBlock Text="🎮 JCL 启动器" FontSize="18" FontWeight="Bold" Foreground="#333333"/>
                                     <TextBlock Text="基于 StarLight_Core 开发" FontSize="13" Foreground="#666666" Margin="0,3,0,0"/>
-                                    <TextBlock Text="最后更新：2026 年 3 月" FontSize="12" Foreground="#999999" Margin="0,3,0,0"/>
+                                    <TextBlock Text="开发时间：2026 年 3 月" FontSize="12" Foreground="#999999" Margin="0,3,0,0"/>
                                 </StackPanel>
                             </Border>
                             
@@ -576,7 +575,7 @@
                                 <StackPanel>
                                     <TextBlock Text="这是一个现代化的 Minecraft 启动器，具有以下特点：" FontSize="13" Foreground="#333333" Margin="0,0,0,8"/>
                                     <TextBlock Text="✨ 功能特性" FontSize="13" FontWeight="Bold" Foreground="#1976D2" Margin="0,0,0,5"/>
-                                    <TextBlock Text="✓ 支持离线模式，无需正版账号即可游戏" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
+                                    <TextBlock Text="✓ 支持离线模式，支持正版账号" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="✓ 自动选择适配的 Java 版本，无需手动配置" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="✓ 使用 BMCLAPI 镜像源，国内高速下载" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="✓ 支持多版本管理，可安装正式版和测试版" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
@@ -595,7 +594,7 @@
                                 <StackPanel>
                                     <TextBlock Text="开发者：jingoujiao" FontSize="13" FontWeight="Bold" Foreground="#333333" Margin="0,0,0,5"/>
                                     <TextBlock Text="GitHub: jingoujiao" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
-                                    <TextBlock Text="网站：jingoujiao.github.io" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
+                                    <TextBlock Text="QQ:1494959379" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="🎮 热爱 Minecraft 的开发者" FontSize="12" Foreground="#999999" Margin="0,8,0,0" FontStyle="Italic"/>
                                     <TextBlock Text="感谢使用本启动器！" FontSize="12" Foreground="#666666" Margin="0,3,0,0"/>
                                 </StackPanel>
@@ -608,7 +607,7 @@
                                     <TextBlock Text="如遇到问题，请通过以下方式获取帮助：" FontSize="12" Foreground="#333333" Margin="0,0,0,8"/>
                                     <TextBlock Text="📧 联系方式" FontSize="13" FontWeight="Bold" Foreground="#2E7D32" Margin="0,0,0,5"/>
                                     <TextBlock Text="• GitHub Issues: 提交问题反馈" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
-                                    <TextBlock Text="• 个人网站：jingoujiao.github.io" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
+                                    <TextBlock Text="• 邮箱:jingoujiao@qq.com" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="📄 开源协议" FontSize="13" FontWeight="Bold" Foreground="#2E7D32" Margin="0,8,0,5"/>
                                     <TextBlock Text="本项目使用 MIT 许可证开源" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>
                                     <TextBlock Text="欢迎贡献代码或提出建议！" FontSize="12" Foreground="#666666" Margin="0,2,0,0"/>

@@ -1418,11 +1418,41 @@ namespace MinecraftLuanch
                 dynamic account;
                 if (_isOnlineMode && _cachedTokenInfo != null)
                 {
-                    var msAuth = new MicrosoftAuthentication(MicrosoftClientId);
-                    account = await msAuth.MicrosoftAuthAsync(_cachedTokenInfo, progress =>
+                    try
                     {
-                        Dispatcher.InvokeAsync(() => AppendLog(progress));
-                    });
+                        var msAuth = new MicrosoftAuthentication(MicrosoftClientId);
+                        account = await msAuth.MicrosoftAuthAsync(_cachedTokenInfo, progress =>
+                        {
+                            Dispatcher.InvokeAsync(() => AppendLog(progress));
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendLog($"微软认证失败: {ex.Message}");
+                        var result = MessageBox.Show(
+                            $"微软账号认证失败：{ex.Message}\n\n是否切换到离线模式继续游戏？",
+                            "认证失败",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Error);
+                        
+                        if (result == MessageBoxResult.Yes)
+                        {
+                            _isOnlineMode = false;
+                            OfflineModeRadio.IsChecked = true;
+                            OnlineModeRadio.IsChecked = false;
+                            OfflineAccountPanel.Visibility = Visibility.Visible;
+                            OnlineAccountPanel.Visibility = Visibility.Collapsed;
+                            SaveAccountButton.Visibility = Visibility.Visible;
+                            
+                            var playerName = PlayerName.Text?.Trim() ?? "Player";
+                            account = new OfflineAuthentication(playerName).OfflineAuth();
+                        }
+                        else
+                        {
+                            StartGame.IsEnabled = true;
+                            return;
+                        }
+                    }
                 }
                 else
                 {
