@@ -395,8 +395,21 @@ namespace MinecraftLuanch
         private async Task DownloadAssetsAsync(JsonElement versionData, CancellationToken cancellationToken)
         {
             string? assetsIndexName = null;
+            string? assetIndexUrl = null;
             
-            if (versionData.TryGetProperty("assets", out var assetsElement))
+            if (versionData.TryGetProperty("assetIndex", out var assetIndexElement))
+            {
+                if (assetIndexElement.TryGetProperty("id", out var idElement))
+                {
+                    assetsIndexName = idElement.GetString();
+                }
+                if (assetIndexElement.TryGetProperty("url", out var urlElement))
+                {
+                    assetIndexUrl = urlElement.GetString();
+                }
+            }
+            
+            if (string.IsNullOrEmpty(assetsIndexName) && versionData.TryGetProperty("assets", out var assetsElement))
             {
                 assetsIndexName = assetsElement.GetString();
             }
@@ -420,11 +433,19 @@ namespace MinecraftLuanch
             {
                 AppendLog($"需要下载资源索引: {assetsIndexName}.json");
                 
-                string[] indexUrls = new string[]
+                var indexUrls = new List<string>();
+                
+                if (!string.IsNullOrEmpty(assetIndexUrl))
                 {
-                    $"{BmclApiBase}/assets/indexes/{assetsIndexName}.json",
-                    $"https://launchermeta.mojang.com/mc/game/assets/indexes/{assetsIndexName}.json",
-                };
+                    var bmclUrl = assetIndexUrl
+                        .Replace("https://launchermeta.mojang.com", BmclApiBase)
+                        .Replace("https://piston-meta.mojang.com", BmclApiBase);
+                    indexUrls.Add(bmclUrl);
+                    indexUrls.Add(assetIndexUrl);
+                }
+                
+                indexUrls.Add($"{BmclApiBase}/assets/indexes/{assetsIndexName}.json");
+                indexUrls.Add($"https://launchermeta.mojang.com/mc/game/assets/indexes/{assetsIndexName}.json");
 
                 bool indexDownloaded = false;
                 foreach (var url in indexUrls)
