@@ -28,6 +28,26 @@ namespace MinecraftLuanch
     {
         private static readonly string BmclApiBase = "https://bmclapi2.bangbang93.com";
         
+        private static readonly HttpClient _sharedHttpClient;
+        
+        static BmclApiInstaller()
+        {
+            var handler = new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+                MaxConnectionsPerServer = 64,
+                EnableMultipleHttp2Connections = true
+            };
+            
+            _sharedHttpClient = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromMinutes(5)
+            };
+            
+            _sharedHttpClient.DefaultRequestHeaders.Add("User-Agent", "MinecraftLauncher/1.0");
+        }
+        
         private readonly string _version;
         private readonly string _minecraftRoot;
         private readonly Action<string, string>? _onProgress;
@@ -46,18 +66,13 @@ namespace MinecraftLuanch
         /// </summary>
         public static async Task<List<MinecraftVersionInfo>> GetVersionListAsync()
         {
-            using var httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(30)
-            };
-
             // 优先尝试从 BMCLAPI 获取版本列表（BMCLAPI 有版本列表镜像）
             // 尝试使用 BMCLAPI 的 /mc/game/version_manifest.json 镜像
             var bmclApiManifestUrl = $"{BmclApiBase}/mc/game/version_manifest.json";
             
             try
             {
-                var response = await httpClient.GetAsync(bmclApiManifestUrl);
+                var response = await _sharedHttpClient.GetAsync(bmclApiManifestUrl);
                 response.EnsureSuccessStatusCode();
 
                 var json = await response.Content.ReadAsStringAsync();
@@ -289,12 +304,7 @@ namespace MinecraftLuanch
             {
                 // 尝试直接下载版本 JSON 来验证版本是否存在
                 var url = $"{BmclApiBase}/version/{_version}/{_version}.json";
-                using var httpClient = new HttpClient
-                {
-                    Timeout = TimeSpan.FromSeconds(10)
-                };
-                
-                var response = await httpClient.GetAsync(url, cancellationToken);
+                var response = await _sharedHttpClient.GetAsync(url, cancellationToken);
                 return response.IsSuccessStatusCode;
             }
             catch
@@ -630,12 +640,7 @@ namespace MinecraftLuanch
             {
                 try
                 {
-                    using var httpClient = new HttpClient
-                    {
-                        Timeout = TimeSpan.FromMinutes(2)
-                    };
-                    
-                    using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    using var response = await _sharedHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                     response.EnsureSuccessStatusCode();
 
                     var dir = Path.GetDirectoryName(savePath);
@@ -870,11 +875,6 @@ namespace MinecraftLuanch
         /// </summary>
         private async Task DownloadFileAsync(string url, string savePath, CancellationToken cancellationToken)
         {
-            using var httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromMinutes(5)
-            };
-
             // 添加重试逻辑
             int retries = 3;
             Exception? lastException = null;
@@ -883,7 +883,7 @@ namespace MinecraftLuanch
             {
                 try
                 {
-                    using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    using var response = await _sharedHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                     response.EnsureSuccessStatusCode();
 
                     var dir = Path.GetDirectoryName(savePath);
