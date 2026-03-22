@@ -66,27 +66,15 @@ namespace MinecraftLuanch
         {
             InitializeComponent();
             
-            var appPath = AppDomain.CurrentDomain.BaseDirectory;
-            var defaultMinecraftPath = Path.Combine(appPath, ".minecraft");
+            var defaultMinecraftPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                ".minecraft"
+            );
             
             GameRoot.Text = defaultMinecraftPath;
             CurrentGameRoot.Text = defaultMinecraftPath;
 
             LoadSettingsFromFile();
-
-            if (!Directory.Exists(GameRoot.Text))
-            {
-                try
-                {
-                    Directory.CreateDirectory(GameRoot.Text);
-                    Directory.CreateDirectory(Path.Combine(GameRoot.Text, "versions"));
-                    AppendLog($"已创建游戏目录: {GameRoot.Text}");
-                }
-                catch (Exception ex)
-                {
-                    AppendLog($"创建游戏目录失败: {ex.Message}");
-                }
-            }
 
             RefreshVersions();
             RefreshJava();
@@ -402,12 +390,6 @@ namespace MinecraftLuanch
 
         private void GameRoot_TextChanged(object sender, TextChangedEventArgs e)
         {
-            // 防止循环触发
-            if (_lastRootChange + TimeSpan.FromMilliseconds(100) > DateTime.Now)
-                return;
-
-            RefreshVersions();
-            _lastRootChange = DateTime.Now;
         }
 
         private void RefreshVersions()
@@ -490,6 +472,7 @@ namespace MinecraftLuanch
                     AccountButton.Background = System.Windows.Media.Brushes.Transparent;
                     SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
                     MoreButton.Background = System.Windows.Media.Brushes.Transparent;
+                    RefreshVersions();
                     break;
                 case "Download":
                     DownloadPage.Visibility = Visibility.Visible;
@@ -1185,7 +1168,6 @@ namespace MinecraftLuanch
         {
             try
             {
-                // 验证内存设置
                 if (!int.TryParse(MaxMemory.Text, out var maxMem))
                 {
                     MessageBox.Show("内存设置必须是数字！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -1204,15 +1186,17 @@ namespace MinecraftLuanch
                     return;
                 }
 
-                // 验证昵称
                 if (string.IsNullOrWhiteSpace(PlayerName.Text))
                 {
                     MessageBox.Show("请输入离线昵称！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
 
-                // 保存到配置文件
                 SaveSettingsToFile();
+                
+                GameRoot.Text = CurrentGameRoot.Text;
+                RefreshVersions();
+                RefreshJava();
 
                 MessageBox.Show("设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
             }
