@@ -1,4 +1,4 @@
-using StarLight_Core.Authentication;
+﻿using StarLight_Core.Authentication;
 using StarLight_Core.Enum;
 using StarLight_Core.Installer;
 using StarLight_Core.Launch;
@@ -7,8 +7,10 @@ using StarLight_Core.Models.Launch;
 using StarLight_Core.Utilities;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -18,7 +20,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using MessageBox = System.Windows.MessageBox;
+using System.Security.Cryptography;
+using System.Net;
 using Button = System.Windows.Controls.Button;
 using Clipboard = System.Windows.Clipboard;
 
@@ -38,6 +41,12 @@ namespace MinecraftLuanch
         private bool _isOnlineMode = false;
         private GetTokenResponse? _cachedTokenInfo;
         private string? _cachedPlayerName;
+        private string? _preferredJavaPath;
+        private string _javaDownloadSourceKey = "tuna";
+        private string _javaTargetVersionKey = "auto";
+        private string _javaInstallRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".jdks");
         private bool _isInitialized = false;
         
         private const string MicrosoftClientId = "e1e383f9-59d9-4aa2-bf5e-73fe83b15ba0";
@@ -57,6 +66,7 @@ namespace MinecraftLuanch
         };
 
         private CancellationTokenSource? _installCts;
+        private CancellationTokenSource? _javaInstallCts;
         
         private double _animationSpeed = 1.0;
 
@@ -75,6 +85,9 @@ namespace MinecraftLuanch
             SetRandomBackground();
             
             LoadSettingsFromFile();
+            SetJavaTargetVersionSelection(_javaTargetVersionKey);
+            SetJavaDownloadSourceSelection(_javaDownloadSourceKey);
+            UpdateJavaVersionHint();
 
             RefreshVersions();
             RefreshJava();
@@ -369,6 +382,7 @@ namespace MinecraftLuanch
                 SelectedVersionText.Text = $"当前版本: {version}";
                 VersionPopup.IsOpen = false;
                 RefreshJava();
+                UpdateJavaVersionHint();
             }
         }
 
@@ -476,7 +490,7 @@ namespace MinecraftLuanch
                     InstallVersion.SelectedIndex = 0;
                 }
                 
-                MessageBox.Show("版本列表已刷新！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MyMessageBox.Show("版本列表已刷新！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             finally
             {
@@ -498,6 +512,7 @@ namespace MinecraftLuanch
                 _currentVersion = versions[0];
                 SelectedVersionText.Text = $"当前版本: {versions[0]}";
                 RefreshJava();
+                UpdateJavaVersionHint();
             }
         }
 
@@ -533,16 +548,33 @@ namespace MinecraftLuanch
         private void RefreshJava()
         {
             var javas = JavaUtil.GetJavas().ToList();
-            var javaPaths = javas.Select(j => j.JavaPath).ToList();
+            var javaPaths = javas
+                .Select(j => j.JavaPath)
+                .Where(IsValidJavaPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var selectedJava = string.IsNullOrWhiteSpace(_preferredJavaPath) ? JavaPath.Text?.Trim() : _preferredJavaPath;
+            javaPaths = ReorderJavaPathsWithPreferred(javaPaths, selectedJava);
             JavaPath.ItemsSource = javaPaths;
             
-            if (javaPaths.Count > 0 && !string.IsNullOrWhiteSpace(_currentVersion))
+            if (!string.IsNullOrWhiteSpace(selectedJava) && javaPaths.Contains(selectedJava))
+            {
+                JavaPath.SelectedItem = selectedJava;
+                JavaPath.Text = selectedJava;
+            }
+            else if (javaPaths.Count > 0 && !string.IsNullOrWhiteSpace(_currentVersion))
             {
                 SelectCompatibleJava(javas, _currentVersion);
             }
             else if (javaPaths.Count > 0)
             {
                 JavaPath.SelectedIndex = 0;
+            }
+
+            // If preferred java was deleted, clear stale selection.
+            if (!IsValidJavaPath(_preferredJavaPath))
+            {
+                _preferredJavaPath = null;
             }
         }
 
@@ -562,7 +594,584 @@ namespace MinecraftLuanch
 
             if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
-                JavaPath.Text = dialog.FileName;
+                SetPreferredJavaPath(dialog.FileName);
+                SaveSettingsToFile();
+            }
+        }
+
+        private async void AutoInstallJava_Click(object sender, RoutedEventArgs e)
+        {
+            if (_javaInstallCts != null)
+            {
+                return;
+            }
+
+            _javaInstallCts = new CancellationTokenSource();
+            var cancellationToken = _javaInstallCts.Token;
+
+            AutoInstallJavaBtn.IsEnabled = false;
+            AutoInstallJavaBtn.Content = "⏳ 下载中...";
+            JavaInstallProgressPanel.Visibility = Visibility.Visible;
+            JavaInstallProgressBar.Value = 0;
+            JavaInstallPercentText.Text = "0%";
+            JavaInstallSpeedText.Text = "速度: --";
+            JavaInstallEtaText.Text = "剩余: --";
+            JavaInstallSizeText.Text = "";
+            JavaInstallSourceText.Text = "";
+            JavaInstallStatusText.Text = "准备下载 Java...";
+
+            string? tempZipPath = null;
+            string? extractTempDir = null;
+            string? versionFolder = null;
+            string? stagingFolder = null;
+
+            try
+            {
+                var requiredJavaVersion = !string.IsNullOrWhiteSpace(_currentVersion)
+                    ? GetRequiredJavaVersion(_currentVersion)
+                    : 17;
+                requiredJavaVersion = ResolveRequestedJavaVersion(requiredJavaVersion);
+
+                var installRoot = _javaInstallRoot;
+                Directory.CreateDirectory(installRoot);
+
+                versionFolder = Path.Combine(installRoot, $"java-{requiredJavaVersion}");
+                var javaExe = FindJavaExecutable(versionFolder);
+                if (IsValidJavaPath(javaExe))
+                {
+                    SetPreferredJavaPath(javaExe);
+                    SaveSettingsToFile();
+                    MyMessageBox.Show($"已使用已安装的 Java {requiredJavaVersion}：\n{javaExe}", "提示",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                var (downloadUrl, packageName) = await GetJavaPackageInfoAsync(requiredJavaVersion, cancellationToken);
+                var candidateUrls = BuildJavaDownloadUrls(downloadUrl, packageName, requiredJavaVersion, _javaDownloadSourceKey);
+                tempZipPath = Path.Combine(Path.GetTempPath(), $"jcl-java-{requiredJavaVersion}-{Guid.NewGuid():N}.zip");
+                extractTempDir = Path.Combine(Path.GetTempPath(), $"jcl-java-extract-{Guid.NewGuid():N}");
+                stagingFolder = Path.Combine(installRoot, $"java-{requiredJavaVersion}.staging");
+                Directory.CreateDirectory(extractTempDir);
+                if (Directory.Exists(stagingFolder))
+                {
+                    try { Directory.Delete(stagingFolder, true); } catch { }
+                }
+                Directory.CreateDirectory(stagingFolder);
+
+                using var handler = new SocketsHttpHandler
+                {
+                    AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
+                    MaxConnectionsPerServer = 8
+                };
+                using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(20) };
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                client.DefaultRequestHeaders.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue
+                {
+                    NoCache = true,
+                    NoStore = true
+                };
+                HttpResponseMessage? response = null;
+                string? selectedSourceName = null;
+                Exception? lastDownloadException = null;
+                var sourceDisplay = new Dictionary<string, string>
+                {
+                    ["tuna"] = "清华镜像",
+                    ["official"] = "官方源",
+                };
+
+                foreach (var (url, sourceKey) in candidateUrls)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    selectedSourceName = sourceDisplay.TryGetValue(sourceKey, out var display) ? display : sourceKey;
+                    JavaInstallSourceText.Text = $"下载源: {selectedSourceName}";
+                    JavaInstallStatusText.Text = "正在连接...";
+                    try
+                    {
+                        var request = new HttpRequestMessage(HttpMethod.Get, url);
+                        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue
+                        {
+                            NoCache = true,
+                            NoStore = true
+                        };
+                        response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                        if (response.IsSuccessStatusCode)
+                        {
+                            break;
+                        }
+                        var statusCode = (int)response.StatusCode;
+                        lastDownloadException = new Exception($"HTTP {statusCode}: {response.StatusCode}");
+                        response.Dispose();
+                        response = null;
+                        JavaInstallStatusText.Text = $"{selectedSourceName} 失败({statusCode})，尝试下一个...";
+                    }
+                    catch (Exception ex)
+                    {
+                        lastDownloadException = ex;
+                        response?.Dispose();
+                        response = null;
+                        JavaInstallStatusText.Text = $"{selectedSourceName} 连接失败，尝试下一个源...";
+                    }
+                }
+
+                if (response == null)
+                {
+                    throw new Exception($"无法连接可用下载源：{lastDownloadException?.Message}");
+                }
+
+                using (response)
+                {
+                    var totalBytes = response.Content.Headers.ContentLength;
+                    await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    await using var fileStream = File.Create(tempZipPath);
+                    var buffer = new byte[1024 * 256];
+                    long totalRead = 0;
+                    int bytesRead;
+                    var updateThrottle = Stopwatch.StartNew();
+                    var speedWatch = Stopwatch.StartNew();
+                    long lastReadBytes = 0;
+                    long lastReadMs = 0;
+                    while ((bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+                    {
+                        await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                        totalRead += bytesRead;
+
+                        if (updateThrottle.ElapsedMilliseconds < 180)
+                        {
+                            continue;
+                        }
+                        updateThrottle.Restart();
+
+                        var elapsedMs = speedWatch.ElapsedMilliseconds;
+                        var deltaBytes = totalRead - lastReadBytes;
+                        var deltaMs = Math.Max(1, elapsedMs - lastReadMs);
+                        var speedBytesPerSec = deltaBytes * 1000d / deltaMs;
+                        lastReadBytes = totalRead;
+                        lastReadMs = elapsedMs;
+                        var speedText = FormatSpeed(speedBytesPerSec);
+                        JavaInstallSpeedText.Text = $"速度: {speedText}";
+
+                        if (totalBytes.HasValue && totalBytes.Value > 0)
+                        {
+                            var percent = Math.Clamp((int)(totalRead * 70 / totalBytes.Value), 0, 70);
+                            JavaInstallProgressBar.Value = percent;
+                            JavaInstallPercentText.Text = $"{percent}%";
+                            var remainingBytes = Math.Max(0, totalBytes.Value - totalRead);
+                            var etaText = FormatEta(speedBytesPerSec > 0 ? remainingBytes / speedBytesPerSec : -1);
+                            JavaInstallEtaText.Text = $"剩余: {etaText}";
+                            JavaInstallSizeText.Text = $"{FormatSize(totalRead)} / {FormatSize(totalBytes.Value)}";
+                            JavaInstallStatusText.Text = "正在下载...";
+                        }
+                        else
+                        {
+                            JavaInstallSizeText.Text = $"已下载: {FormatSize(totalRead)}";
+                            JavaInstallStatusText.Text = "正在下载...";
+                        }
+                    }
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                JavaInstallProgressBar.Value = 75;
+                JavaInstallPercentText.Text = "75%";
+                JavaInstallStatusText.Text = "正在解压安装包...";
+                JavaInstallSpeedText.Text = "速度: --";
+                JavaInstallEtaText.Text = "剩余: --";
+
+                ZipFile.ExtractToDirectory(tempZipPath, extractTempDir, true);
+
+                var extractedJava = FindJavaExecutable(extractTempDir);
+                if (!IsValidJavaPath(extractedJava))
+                {
+                    throw new Exception("下载成功但未找到 java.exe/javaw.exe");
+                }
+
+                var jdkRoot = Directory.GetParent(Path.GetDirectoryName(extractedJava)!)?.FullName;
+                if (string.IsNullOrWhiteSpace(jdkRoot) || !Directory.Exists(jdkRoot))
+                {
+                    throw new Exception("Java 目录结构异常，无法完成安装");
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                JavaInstallProgressBar.Value = 85;
+                JavaInstallPercentText.Text = "85%";
+                JavaInstallStatusText.Text = "正在配置 Java 文件...";
+
+                CopyDirectory(jdkRoot, stagingFolder);
+
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Directory.Exists(versionFolder))
+                {
+                    try { Directory.Delete(versionFolder, true); } catch { }
+                }
+                Directory.Move(stagingFolder, versionFolder);
+
+                var installedJava = FindJavaExecutable(versionFolder);
+                if (!IsValidJavaPath(installedJava))
+                {
+                    throw new Exception("安装后未找到 Java 可执行文件");
+                }
+
+                SetPreferredJavaPath(installedJava);
+                SaveSettingsToFile();
+                JavaInstallProgressBar.Value = 100;
+                JavaInstallPercentText.Text = "100%";
+                JavaInstallStatusText.Text = "Java 配置完成";
+
+                MyMessageBox.Show(
+                    $"Java {requiredJavaVersion} 下载并配置成功！\n\n路径：{installedJava}",
+                    "成功",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+
+                try { File.Delete(tempZipPath); } catch { }
+                try { Directory.Delete(extractTempDir, true); } catch { }
+            }
+            catch (OperationCanceledException)
+            {
+                JavaInstallStatusText.Text = "下载已取消，正在清理文件...";
+                JavaInstallSpeedText.Text = "速度: --";
+                JavaInstallEtaText.Text = "剩余: --";
+
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(tempZipPath) && File.Exists(tempZipPath))
+                    {
+                        File.Delete(tempZipPath);
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(extractTempDir) && Directory.Exists(extractTempDir))
+                    {
+                        Directory.Delete(extractTempDir, true);
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(stagingFolder) && Directory.Exists(stagingFolder))
+                    {
+                        Directory.Delete(stagingFolder, true);
+                    }
+                }
+                catch { }
+
+                MyMessageBox.Show("Java 下载已取消，临时文件已清理。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MyMessageBox.Show($"自动下载 Java 失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                _javaInstallCts?.Dispose();
+                _javaInstallCts = null;
+                AutoInstallJavaBtn.IsEnabled = true;
+                AutoInstallJavaBtn.Content = "⬇️ 一键下载并配置 Java";
+                JavaInstallProgressPanel.Visibility = Visibility.Collapsed;
+                RefreshJava();
+            }
+        }
+
+        private void CancelJavaInstall_Click(object sender, RoutedEventArgs e)
+        {
+            if (_javaInstallCts != null && !_javaInstallCts.IsCancellationRequested)
+            {
+                _javaInstallCts.Cancel();
+            }
+        }
+
+        private static string? FindJavaExecutable(string rootDir)
+        {
+            if (!Directory.Exists(rootDir))
+            {
+                return null;
+            }
+
+            var javaw = Directory.GetFiles(rootDir, "javaw.exe", SearchOption.AllDirectories).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(javaw))
+            {
+                return javaw;
+            }
+
+            return Directory.GetFiles(rootDir, "java.exe", SearchOption.AllDirectories).FirstOrDefault();
+        }
+
+ private static List<(string Url, string SourceKey)> BuildJavaDownloadUrls(
+            string officialUrl,
+            string packageName,
+            int javaVersion,
+            string preferredSourceKey)
+        {
+            var tunaUrl = $"https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{javaVersion}/jdk/x64/windows/{packageName}";
+            
+            var all = new List<(string Url, string SourceKey)>
+            {
+                (tunaUrl, "tuna"),
+                (officialUrl, "official"),
+            };
+
+            return all;
+        }
+
+        private static async Task<(string DownloadUrl, string PackageName)> GetJavaPackageInfoAsync(int javaVersion, CancellationToken cancellationToken)
+        {
+            var apiUrl =
+                $"https://api.adoptium.net/v3/assets/latest/{javaVersion}/hotspot?os=windows&architecture=x64&image_type=jdk&jvm_impl=hotspot&heap_size=normal&vendor=eclipse";
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            using var response = await client.GetAsync(apiUrl, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() == 0)
+            {
+                throw new Exception($"未找到 Java {javaVersion} 的可用安装包");
+            }
+
+            var first = root[0];
+            if (!first.TryGetProperty("binary", out var binary) ||
+                !binary.TryGetProperty("package", out var package) ||
+                !package.TryGetProperty("link", out var linkElement))
+            {
+                throw new Exception("Java 下载信息格式异常（缺少 link）");
+            }
+
+            var link = linkElement.GetString();
+            if (string.IsNullOrWhiteSpace(link))
+            {
+                throw new Exception("Java 下载地址为空");
+            }
+
+            var packageName = package.TryGetProperty("name", out var nameElement)
+                ? nameElement.GetString()
+                : Path.GetFileName(new Uri(link).AbsolutePath);
+
+            if (string.IsNullOrWhiteSpace(packageName))
+            {
+                throw new Exception("无法解析 Java 包名");
+            }
+
+            return (link, packageName);
+        }
+
+        private static string FormatSpeed(double bytesPerSec)
+        {
+            if (bytesPerSec <= 0)
+            {
+                return "0 KB/s";
+            }
+
+            var kb = bytesPerSec / 1024d;
+            if (kb < 1024)
+            {
+                return $"{kb:F1} KB/s";
+            }
+
+            var mb = kb / 1024d;
+            return $"{mb:F2} MB/s";
+        }
+
+        private static string FormatSize(double bytes)
+        {
+            if (bytes <= 0)
+            {
+                return "0 B";
+            }
+
+            var kb = bytes / 1024d;
+            if (kb < 1024)
+            {
+                return $"{kb:F1} KB";
+            }
+
+            var mb = kb / 1024d;
+            if (mb < 1024)
+            {
+                return $"{mb:F1} MB";
+            }
+
+            var gb = mb / 1024d;
+            return $"{gb:F2} GB";
+        }
+
+        private static string FormatEta(double seconds)
+        {
+            if (seconds <= 0 || double.IsNaN(seconds) || double.IsInfinity(seconds))
+            {
+                return "--";
+            }
+
+            var ts = TimeSpan.FromSeconds(seconds);
+            if (ts.TotalHours >= 1)
+            {
+                return $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+            }
+            return $"{ts.Minutes:D2}:{ts.Seconds:D2}";
+        }
+
+        private void SetJavaTargetVersionSelection(string targetKey)
+        {
+            _javaTargetVersionKey = targetKey;
+            foreach (var item in JavaTargetVersion.Items)
+            {
+                if (item is ComboBoxItem combo && string.Equals(combo.Tag?.ToString(), targetKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    JavaTargetVersion.SelectedItem = combo;
+                    return;
+                }
+            }
+
+            JavaTargetVersion.SelectedIndex = 0;
+            _javaTargetVersionKey = "auto";
+        }
+
+        private int ResolveRequestedJavaVersion(int autoRequiredVersion)
+        {
+            if (int.TryParse(_javaTargetVersionKey, out var selected))
+            {
+                return Math.Max(8, selected);
+            }
+
+            return Math.Max(8, autoRequiredVersion);
+        }
+
+        private void UpdateJavaVersionHint()
+        {
+            var autoRequiredVersion = !string.IsNullOrWhiteSpace(_currentVersion)
+                ? GetRequiredJavaVersion(_currentVersion)
+                : 17;
+            var resolvedVersion = ResolveRequestedJavaVersion(autoRequiredVersion);
+
+            var targetVersionText = _javaTargetVersionKey == "auto"
+                ? $"自动（当前版本建议 Java {autoRequiredVersion}）"
+                : $"手动选择 Java {resolvedVersion}";
+            JavaVersionHintText.Text = $"当前选择：{targetVersionText}；对应关系：1.21+ -> Java 21，1.17-1.20 -> Java 17，1.16及以下 -> Java 8";
+        }
+
+        private void JavaTargetVersion_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (JavaTargetVersion.SelectedItem is ComboBoxItem item)
+            {
+                _javaTargetVersionKey = item.Tag?.ToString() ?? "auto";
+            }
+            else
+            {
+                _javaTargetVersionKey = "auto";
+            }
+
+            UpdateJavaVersionHint();
+            if (_isInitialized)
+            {
+                SaveSettingsToFile();
+            }
+        }
+
+        private void JavaDownloadSource_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (JavaDownloadSource.SelectedItem is ComboBoxItem item)
+            {
+                _javaDownloadSourceKey = item.Tag?.ToString() ?? "tuna";
+            }
+            else
+            {
+                _javaDownloadSourceKey = "tuna";
+            }
+
+            if (_isInitialized)
+            {
+                SaveSettingsToFile();
+            }
+        }
+
+        private void SetJavaDownloadSourceSelection(string sourceKey)
+        {
+            _javaDownloadSourceKey = sourceKey;
+            foreach (var item in JavaDownloadSource.Items)
+            {
+                if (item is ComboBoxItem combo && string.Equals(combo.Tag?.ToString(), sourceKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    JavaDownloadSource.SelectedItem = combo;
+                    return;
+                }
+            }
+
+            JavaDownloadSource.SelectedIndex = 0;
+            _javaDownloadSourceKey = "tuna";
+        }
+
+        private List<string> ReorderJavaPathsWithPreferred(List<string> javaPaths, string? preferredPath)
+        {
+            if (string.IsNullOrWhiteSpace(preferredPath) || !IsValidJavaPath(preferredPath))
+            {
+                return javaPaths;
+            }
+
+            javaPaths.RemoveAll(p => string.Equals(p, preferredPath, StringComparison.OrdinalIgnoreCase));
+            javaPaths.Insert(0, preferredPath);
+            return javaPaths;
+        }
+
+        private void SetPreferredJavaPath(string? javaPath)
+        {
+            var normalizedPath = javaPath?.Trim();
+            if (string.IsNullOrWhiteSpace(normalizedPath))
+            {
+                return;
+            }
+
+            _preferredJavaPath = normalizedPath;
+
+            var currentItems = (JavaPath.ItemsSource as IEnumerable<string>)?.ToList()
+                ?? JavaPath.Items.Cast<object>().Select(i => i?.ToString() ?? string.Empty).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+
+            currentItems = ReorderJavaPathsWithPreferred(currentItems, normalizedPath);
+            JavaPath.ItemsSource = currentItems;
+            JavaPath.SelectedItem = normalizedPath;
+            JavaPath.Text = normalizedPath;
+        }
+
+        private static bool IsValidJavaPath(string? javaPath)
+        {
+            if (string.IsNullOrWhiteSpace(javaPath))
+            {
+                return false;
+            }
+
+            if (!File.Exists(javaPath))
+            {
+                return false;
+            }
+
+            var fileName = Path.GetFileName(javaPath);
+            return fileName.Equals("java.exe", StringComparison.OrdinalIgnoreCase) ||
+                   fileName.Equals("javaw.exe", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void PromptDownloadJava()
+        {
+            var openDownload = MyMessageBox.Show(
+                "未检测到可用的 Java。\n\n是否打开 Java 下载页面？",
+                "缺少 Java",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (openDownload == MessageBoxResult.Yes)
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "https://adoptium.net/temurin/releases/",
+                        UseShellExecute = true
+                    });
+                }
+                catch { }
             }
         }
 
@@ -713,6 +1322,7 @@ namespace MinecraftLuanch
             OfflineAccountPanel.Visibility = Visibility.Visible;
             OnlineAccountPanel.Visibility = Visibility.Collapsed;
             UpdateAccountInfo();
+            SaveSettingsToFile();
         }
 
         private void OnlineModeRadio_Checked(object sender, RoutedEventArgs e)
@@ -721,6 +1331,14 @@ namespace MinecraftLuanch
             _isOnlineMode = true;
             OfflineAccountPanel.Visibility = Visibility.Collapsed;
             OnlineAccountPanel.Visibility = Visibility.Visible;
+            UpdateAccountInfo();
+            SaveSettingsToFile();
+        }
+
+        private void PlayerName_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (!_isInitialized) return;
+            SaveSettingsToFile();
             UpdateAccountInfo();
         }
 
@@ -764,7 +1382,7 @@ namespace MinecraftLuanch
                     UpdateAccountInfo();
                     SaveSettingsToFile();
                     
-                    MessageBox.Show($"微软账号登录成功！\n\n玩家名称：{userInfo.Name}", 
+                    MyMessageBox.Show($"微软账号登录成功！\n\n玩家名称：{userInfo.Name}", 
                         "登录成功", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 else
@@ -822,7 +1440,7 @@ namespace MinecraftLuanch
         {
             RefreshVersionsList();
             RefreshVersions();
-            MessageBox.Show("版本列表已刷新！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MyMessageBox.Show("版本列表已刷新！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private void OpenVersionFolder_Click(object sender, RoutedEventArgs e)
@@ -855,15 +1473,14 @@ namespace MinecraftLuanch
                 var oldVersionPath = Path.Combine(root, "versions", oldVersionName);
                 if (!Directory.Exists(oldVersionPath)) return;
 
-                var input = Microsoft.VisualBasic.Interaction.InputBox(
-                    "请输入新的版本名称：", "重命名版本", oldVersionName);
+                var input = InputDialog.Show("请输入新的版本名称：", "重命名版本", oldVersionName);
                 
                 if (string.IsNullOrWhiteSpace(input) || input == oldVersionName) return;
 
                 var newVersionPath = Path.Combine(root, "versions", input);
                 if (Directory.Exists(newVersionPath))
                 {
-                    MessageBox.Show("目标版本名称已存在！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MyMessageBox.Show("目标版本名称已存在！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
 
@@ -881,12 +1498,12 @@ namespace MinecraftLuanch
 
                     RefreshVersionsList();
                     RefreshVersions();
-                    MessageBox.Show($"版本重命名成功！\n\n从：{oldVersionName}\n到：{input}", 
+                    MyMessageBox.Show($"版本重命名成功！\n\n从：{oldVersionName}\n到：{input}", 
                         "成功", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"重命名失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MyMessageBox.Show($"重命名失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
         }
@@ -901,7 +1518,7 @@ namespace MinecraftLuanch
                 var versionPath = Path.Combine(root, "versions", versionName);
                 if (!Directory.Exists(versionPath)) return;
 
-                var result = MessageBox.Show(
+                var result = MyMessageBox.Show(
                     $"确定要删除版本 \"{versionName}\" 吗？\n\n此操作不可恢复！",
                     "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning);
 
@@ -912,11 +1529,11 @@ namespace MinecraftLuanch
                         Directory.Delete(versionPath, true);
                         RefreshVersionsList();
                         RefreshVersions();
-                        MessageBox.Show("版本已删除！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                        MyMessageBox.Show("版本已删除！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show($"删除失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                        MyMessageBox.Show($"删除失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                     }
                 }
             }
@@ -948,7 +1565,7 @@ namespace MinecraftLuanch
 
                 if (Directory.Exists(destPath))
                 {
-                    var result = MessageBox.Show(
+                    var result = MyMessageBox.Show(
                         $"目标版本 \"{sourceFolderName}\" 已存在，是否覆盖？",
                         "确认覆盖", MessageBoxButton.YesNo, MessageBoxImage.Question);
 
@@ -971,11 +1588,11 @@ namespace MinecraftLuanch
 
                     RefreshVersionsList();
                     RefreshVersions();
-                    MessageBox.Show($"版本导入成功！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MyMessageBox.Show($"版本导入成功！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"导入失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MyMessageBox.Show($"导入失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
         }
@@ -1028,14 +1645,14 @@ namespace MinecraftLuanch
                 UpdateBackgroundCount();
                 SetRandomBackground();
                 
-                MessageBox.Show($"已添加 {dialog.FileNames.Length} 张背景图片！", 
+                MyMessageBox.Show($"已添加 {dialog.FileNames.Length} 张背景图片！", 
                     "成功", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
         private void ClearBackgrounds_Click(object sender, RoutedEventArgs e)
         {
-            var result = MessageBox.Show(
+            var result = MyMessageBox.Show(
                 "确定要清空所有背景图片吗？\n\n此操作不可恢复！",
                 "确认清空", MessageBoxButton.YesNo, MessageBoxImage.Warning);
 
@@ -1056,11 +1673,11 @@ namespace MinecraftLuanch
                     _backgroundImages.Clear();
                     UpdateBackgroundCount();
                     
-                    MessageBox.Show("背景图片已清空！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MyMessageBox.Show("背景图片已清空！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"清空失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MyMessageBox.Show($"清空失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
         }
@@ -1071,13 +1688,13 @@ namespace MinecraftLuanch
             {
                 if (!int.TryParse(MaxMemory.Text, out var maxMem))
                 {
-                    MessageBox.Show("内存设置必须是数字！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MyMessageBox.Show("内存设置必须是数字！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                     return;
                 }
 
                 if (maxMem < 512)
                 {
-                    MessageBox.Show("最大内存太小，建议至少 512MB。", "警告", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MyMessageBox.Show("最大内存太小，建议至少 512MB。", "警告", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
 
@@ -1085,12 +1702,64 @@ namespace MinecraftLuanch
                 RefreshVersions();
                 RefreshJava();
 
-                MessageBox.Show("设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                MyMessageBox.Show("设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"保存设置失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                MyMessageBox.Show($"保存设置失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        // AES requires a 32-byte key and a 16-byte IV.
+        private static readonly byte[] EncryptionKey = Encoding.UTF8.GetBytes("JCLauncher2024SecretKey32Bytes!!");
+        private static readonly byte[] EncryptionIV = Encoding.UTF8.GetBytes("JCLInitVector16B");
+
+        private string EncryptString(string plainText)
+        {
+            using var aes = Aes.Create();
+            aes.Key = EncryptionKey;
+            aes.IV = EncryptionIV;
+            
+            var encryptor = aes.CreateEncryptor(aes.Key, aes.IV);
+            using var msEncrypt = new MemoryStream();
+            using var csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write);
+            using (var swEncrypt = new StreamWriter(csEncrypt))
+            {
+                swEncrypt.Write(plainText);
+            }
+            return Convert.ToBase64String(msEncrypt.ToArray());
+        }
+
+        private string DecryptString(string cipherText)
+        {
+            try
+            {
+                var buffer = Convert.FromBase64String(cipherText);
+                using var aes = Aes.Create();
+                aes.Key = EncryptionKey;
+                aes.IV = EncryptionIV;
+                
+                var decryptor = aes.CreateDecryptor(aes.Key, aes.IV);
+                using var msDecrypt = new MemoryStream(buffer);
+                using var csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read);
+                using var srDecrypt = new StreamReader(csDecrypt);
+                return srDecrypt.ReadToEnd();
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private string DecryptStringOrFallback(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            var decrypted = DecryptString(value);
+            return string.IsNullOrEmpty(decrypted) ? value : decrypted;
         }
 
         private void SaveSettingsToFile()
@@ -1098,24 +1767,28 @@ namespace MinecraftLuanch
             try
             {
                 var appPath = AppDomain.CurrentDomain.BaseDirectory;
-                var configPath = Path.Combine(appPath, "settings.txt");
+                var configPath = Path.Combine(appPath, "settings.dat");
 
                 var config = new StringBuilder();
                 config.AppendLine($"GameRoot={GameRoot.Text}");
                 config.AppendLine($"MaxMemory={MaxMemory.Text}");
-                config.AppendLine($"PlayerName={PlayerName.Text}");
+                config.AppendLine($"PlayerName={EncryptString(PlayerName.Text ?? string.Empty)}");
+                config.AppendLine($"JavaPath={EncryptString((_preferredJavaPath ?? JavaPath.Text ?? string.Empty).Trim())}");
+                config.AppendLine($"JavaTargetVersion={_javaTargetVersionKey}");
+                config.AppendLine($"JavaDownloadSource={_javaDownloadSourceKey}");
                 config.AppendLine($"FullScreen={FullScreen.IsChecked}");
                 config.AppendLine($"AnimationSpeed={_animationSpeed}");
                 config.AppendLine($"IsOnlineMode={_isOnlineMode}");
                 
                 if (_isOnlineMode && _cachedTokenInfo != null)
                 {
-                    config.AppendLine($"AccessToken={_cachedTokenInfo.AccessToken}");
-                    config.AppendLine($"RefreshToken={_cachedTokenInfo.RefreshToken}");
-                    config.AppendLine($"PlayerNameOnline={_cachedPlayerName}");
+                    config.AppendLine($"AccessToken={EncryptString(_cachedTokenInfo.AccessToken)}");
+                    config.AppendLine($"RefreshToken={EncryptString(_cachedTokenInfo.RefreshToken)}");
+                    config.AppendLine($"PlayerNameOnline={EncryptString(_cachedPlayerName ?? "")}");
                 }
 
-                File.WriteAllText(configPath, config.ToString());
+                var encryptedData = EncryptString(config.ToString());
+                File.WriteAllText(configPath, encryptedData);
             }
             catch { }
         }
@@ -1125,11 +1798,16 @@ namespace MinecraftLuanch
             try
             {
                 var appPath = AppDomain.CurrentDomain.BaseDirectory;
-                var configPath = Path.Combine(appPath, "settings.txt");
+                var configPath = Path.Combine(appPath, "settings.dat");
 
                 if (File.Exists(configPath))
                 {
-                    var config = File.ReadAllLines(configPath);
+                    var encryptedData = File.ReadAllText(configPath);
+                    var configText = DecryptString(encryptedData);
+                    
+                    if (string.IsNullOrEmpty(configText)) return;
+                    
+                    var config = configText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
                     string? accessToken = null;
                     string? refreshToken = null;
                     string? playerNameOnline = null;
@@ -1151,7 +1829,16 @@ namespace MinecraftLuanch
                                     MaxMemory.Text = value;
                                     break;
                                 case "PlayerName":
-                                    PlayerName.Text = value;
+                                    PlayerName.Text = DecryptStringOrFallback(value);
+                                    break;
+                                case "JavaPath":
+                                    _preferredJavaPath = DecryptStringOrFallback(value);
+                                    break;
+                                case "JavaTargetVersion":
+                                    _javaTargetVersionKey = value;
+                                    break;
+                                case "JavaDownloadSource":
+                                    _javaDownloadSourceKey = value;
                                     break;
                                 case "FullScreen":
                                     if (bool.TryParse(value, out var fullScreen))
@@ -1174,13 +1861,13 @@ namespace MinecraftLuanch
                                     }
                                     break;
                                 case "AccessToken":
-                                    accessToken = value;
+                                    accessToken = DecryptString(value);
                                     break;
                                 case "RefreshToken":
-                                    refreshToken = value;
+                                    refreshToken = DecryptString(value);
                                     break;
                                 case "PlayerNameOnline":
-                                    playerNameOnline = value;
+                                    playerNameOnline = DecryptString(value);
                                     break;
                             }
                         }
@@ -1195,6 +1882,10 @@ namespace MinecraftLuanch
                         };
                         _cachedPlayerName = playerNameOnline;
                     }
+
+                    SetJavaTargetVersionSelection(_javaTargetVersionKey);
+                    SetJavaDownloadSourceSelection(_javaDownloadSourceKey);
+                    UpdateJavaVersionHint();
                 }
             }
             catch { }
@@ -1210,7 +1901,7 @@ namespace MinecraftLuanch
                 {
                     if (_cachedTokenInfo == null)
                     {
-                        MessageBox.Show("请先在账号管理中登录微软账号。");
+                        MyMessageBox.Show("请先在账号管理中登录微软账号。");
                         return;
                     }
                 }
@@ -1219,7 +1910,7 @@ namespace MinecraftLuanch
                     var playerName = PlayerName.Text?.Trim();
                     if (string.IsNullOrWhiteSpace(playerName))
                     {
-                        MessageBox.Show("请输入离线昵称。");
+                        MyMessageBox.Show("请输入离线昵称。");
                         return;
                     }
                 }
@@ -1227,30 +1918,52 @@ namespace MinecraftLuanch
                 var root = GameRoot.Text?.Trim();
                 if (string.IsNullOrWhiteSpace(root))
                 {
-                    MessageBox.Show("请选择游戏目录（.minecraft）。");
+                    MyMessageBox.Show("请选择游戏目录（.minecraft）。");
                     return;
                 }
 
                 var version = _currentVersion;
                 if (string.IsNullOrWhiteSpace(version))
                 {
-                    MessageBox.Show("请选择要启动的版本。");
+                    MyMessageBox.Show("请选择要启动的版本。");
                     return;
                 }
 
                 var java = JavaPath.SelectedValue as string;
                 if (string.IsNullOrWhiteSpace(java))
                 {
-                    MessageBox.Show("请选择 Java。");
+                    MyMessageBox.Show("请选择 Java。");
                     return;
                 }
+
+                if (!IsValidJavaPath(java))
+                {
+                    var chooseJava = MyMessageBox.Show(
+                        "当前 Java 路径无效（可能已被删除）。\n\n是否现在选择新的 Java 可执行文件？",
+                        "Java 路径无效",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning);
+
+                    if (chooseJava == MessageBoxResult.Yes)
+                    {
+                        BrowseJava_Click(this, new RoutedEventArgs());
+                        java = JavaPath.Text?.Trim();
+                    }
+
+                    if (!IsValidJavaPath(java))
+                    {
+                        PromptDownloadJava();
+                        return;
+                    }
+                }
+                java = java!.Trim();
 
                 var requiredJavaVersion = GetRequiredJavaVersion(version);
                 var currentJavaVersion = GetJavaVersion(java);
                 
                 if (currentJavaVersion < requiredJavaVersion)
                 {
-                    var result = MessageBox.Show(
+                    var result = MyMessageBox.Show(
                         $"警告：Java 版本不兼容！\n\n" +
                         $"当前选择的 Java 版本：Java {currentJavaVersion}\n" +
                         $"游戏 {version} 需要的 Java 版本：Java {requiredJavaVersion} 或更高\n\n" +
@@ -1261,12 +1974,31 @@ namespace MinecraftLuanch
                     
                     if (result == MessageBoxResult.No)
                     {
-                        var javas = JavaUtil.GetJavas().ToList();
+                        var javas = JavaUtil.GetJavas()
+                            .Where(j => IsValidJavaPath(j.JavaPath))
+                            .ToList();
                         if (javas.Count > 0)
                         {
                             SelectCompatibleJava(javas, version);
-                            MessageBox.Show("已自动为您切换到兼容的 Java 版本，请重新点击开始游戏。", 
+                            MyMessageBox.Show("已自动为您切换到兼容的 Java 版本，请重新点击开始游戏。", 
                                 "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                        }
+                        else
+                        {
+                            var chooseJava = MyMessageBox.Show(
+                                $"未找到兼容 Java（需要 Java {requiredJavaVersion}+）。\n\n是否现在手动选择 Java？",
+                                "缺少兼容 Java",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Warning);
+
+                            if (chooseJava == MessageBoxResult.Yes)
+                            {
+                                BrowseJava_Click(this, new RoutedEventArgs());
+                            }
+                            else
+                            {
+                                PromptDownloadJava();
+                            }
                         }
                         return;
                     }
@@ -1274,13 +2006,13 @@ namespace MinecraftLuanch
 
                 if (!int.TryParse(MaxMemory.Text, out var maxMem))
                 {
-                    MessageBox.Show("内存设置必须是数字。");
+                    MyMessageBox.Show("内存设置必须是数字。");
                     return;
                 }
 
                 if (maxMem < 512)
                 {
-                    MessageBox.Show("最大内存太小，建议至少 512MB。");
+                    MyMessageBox.Show("最大内存太小，建议至少 512MB。");
                     return;
                 }
 
@@ -1301,7 +2033,7 @@ namespace MinecraftLuanch
                     }
                     catch (Exception ex)
                     {
-                        var result = MessageBox.Show(
+                        var result = MyMessageBox.Show(
                             $"微软账号认证失败：{ex.Message}\n\n是否切换到离线模式继续游戏？",
                             "认证失败",
                             MessageBoxButton.YesNo,
@@ -1381,7 +2113,7 @@ namespace MinecraftLuanch
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show("启动过程发生异常：\n" + ex.Message);
+                    MyMessageBox.Show("启动过程发生异常：\n" + ex.Message);
                     return;
                 }
 
@@ -1393,7 +2125,7 @@ namespace MinecraftLuanch
                 else
                 {
                     LaunchStatusText.Text = "启动失败";
-                    MessageBox.Show("启动失败!" + la.Exception);
+                    MyMessageBox.Show("启动失败!" + la.Exception);
                 }
             }
             finally
@@ -1402,24 +2134,57 @@ namespace MinecraftLuanch
             }
         }
 
+        private void PlayerName_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (!_isInitialized) return;
+            SaveSettingsToFile();
+            UpdateAccountInfo();
+        }
+
+        private void JavaPath_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!_isInitialized) return;
+            SetPreferredJavaPath(JavaPath.SelectedItem?.ToString() ?? JavaPath.Text);
+            SaveSettingsToFile();
+        }
+
+        private void JavaPath_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (!_isInitialized) return;
+            SetPreferredJavaPath(JavaPath.Text);
+            SaveSettingsToFile();
+        }
+
         private async void InstallVanilla_Click(object sender, RoutedEventArgs e)
         {
             InstallVanillaBtn.IsEnabled = false;
             CancelDownloadBtn.Visibility = Visibility.Visible;
+            GameDownloadProgressPanel.Visibility = Visibility.Visible;
+            DownloadProgressBar.Value = 0;
+            DownloadPercentText.Text = "0%";
+            DownloadSpeedText.Text = "速度: --";
+            DownloadEtaText.Text = "剩余: --";
+            DownloadSizeText.Text = "";
+            DownloadSourceText.Text = "";
+            DownloadStatusText.Text = "准备下载...";
+            
+            var speedWatch = System.Diagnostics.Stopwatch.StartNew();
+            var lastProgress = 0.0;
+            var lastTime = 0L;
             
             try
             {
                 var root = GameRoot.Text?.Trim();
                 if (string.IsNullOrWhiteSpace(root))
                 {
-                    MessageBox.Show("请先选择游戏目录（.minecraft）。");
+                    MyMessageBox.Show("请先选择游戏目录（.minecraft）。");
                     return;
                 }
 
                 var targetVersion = InstallVersion.SelectedItem as string;
                 if (string.IsNullOrWhiteSpace(targetVersion))
                 {
-                    MessageBox.Show("请选择要安装的版本。");
+                    MyMessageBox.Show("请选择要安装的版本。");
                     return;
                 }
 
@@ -1430,10 +2195,33 @@ namespace MinecraftLuanch
                     {
                         Dispatcher.Invoke(() =>
                         {
-                            DownloadProgressText.Text = status;
                             var progressValue = double.Parse(progress.TrimEnd('%'));
                             DownloadProgressBar.Value = progressValue;
                             DownloadPercentText.Text = progress;
+                            DownloadStatusText.Text = status;
+                            
+                            var elapsedMs = speedWatch.ElapsedMilliseconds;
+                            if (elapsedMs - lastTime >= 500)
+                            {
+                                var deltaProgress = progressValue - lastProgress;
+                                var deltaTime = elapsedMs - lastTime;
+                                if (deltaTime > 0 && deltaProgress > 0)
+                                {
+                                    var remainingProgress = 100 - progressValue;
+                                    var estimatedMs = remainingProgress * deltaTime / deltaProgress;
+                                    var eta = TimeSpan.FromMilliseconds(estimatedMs);
+                                    if (eta.TotalHours >= 1)
+                                    {
+                                        DownloadEtaText.Text = $"剩余: {(int)eta.TotalHours:D2}:{eta.Minutes:D2}:{eta.Seconds:D2}";
+                                    }
+                                    else
+                                    {
+                                        DownloadEtaText.Text = $"剩余: {eta.Minutes:D2}:{eta.Seconds:D2}";
+                                    }
+                                }
+                                lastProgress = progressValue;
+                                lastTime = elapsedMs;
+                            }
                         });
                     });
 
@@ -1441,20 +2229,21 @@ namespace MinecraftLuanch
 
                 RefreshVersions();
                 
-                MessageBox.Show($"版本 {targetVersion} 安装成功！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MyMessageBox.Show($"版本 {targetVersion} 安装成功！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (OperationCanceledException)
             {
-                MessageBox.Show("下载已取消", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                MyMessageBox.Show("下载已取消", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"安装失败：\n{ex.Message}");
+                MyMessageBox.Show($"安装失败：\n{ex.Message}");
             }
             finally
             {
                 InstallVanillaBtn.IsEnabled = true;
                 CancelDownloadBtn.Visibility = Visibility.Collapsed;
+                GameDownloadProgressPanel.Visibility = Visibility.Collapsed;
                 _installCts?.Dispose();
             }
         }
@@ -1468,3 +2257,4 @@ namespace MinecraftLuanch
         }
     }
 }
+

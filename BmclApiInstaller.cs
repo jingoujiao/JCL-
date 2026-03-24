@@ -705,169 +705,168 @@ namespace MinecraftLuanch
             }
 
             int total = libraries.Count;
-            int downloaded = 0;
+            int processed = 0;
             int failed = 0;
             int skipped = 0;
 
             AppendLog($"共 {total} 个库文件需要检查");
+            var libsToDownload = new List<(string LibPath, string FullPath, string[] Urls)>();
 
             foreach (var lib in libraries)
             {
-                // 检查是否满足平台要求
-                if (lib.TryGetProperty("rules", out var rulesElement))
-                {
-                    // 简单的规则检查 - 如果有 rules，暂时跳过复杂检查
-                    // 实际应该根据操作系统等条件判断
-                }
-
-                // 检查是否有 downloads 信息
                 if (!lib.TryGetProperty("downloads", out var downloadsElement))
                 {
-                    // 没有 downloads 信息，尝试从 name 构建 URL
-                    if (lib.TryGetProperty("name", out var nameElement))
+                    continue;
+                }
+
+                if (downloadsElement.TryGetProperty("artifact", out var artifactElement))
+                {
+                    TryAddLibraryDownloadTask(lib, artifactElement, librariesDir, libsToDownload, ref skipped);
+                }
+
+                // Download Windows natives required by LWJGL and similar libraries.
+                if (downloadsElement.TryGetProperty("classifiers", out var classifiersElement))
+                {
+                    foreach (var classifier in classifiersElement.EnumerateObject())
                     {
-                        var name = nameElement.GetString();
-                        if (!string.IsNullOrEmpty(name))
+                        var classifierName = classifier.Name;
+                        if (!classifierName.Contains("natives-windows", StringComparison.OrdinalIgnoreCase))
                         {
-                            downloaded++;
                             continue;
                         }
+
+                        TryAddLibraryDownloadTask(lib, classifier.Value, librariesDir, libsToDownload, ref skipped);
                     }
-                    continue;
-                }
-
-                // 获取 artifact 信息
-                if (!downloadsElement.TryGetProperty("artifact", out var artifactElement))
-                {
-                    downloaded++;
-                    continue;
-                }
-
-                // 获取路径
-                string? libPath = null;
-                if (artifactElement.TryGetProperty("path", out var pathElement))
-                {
-                    libPath = pathElement.GetString();
-                }
-
-                if (string.IsNullOrEmpty(libPath))
-                {
-                    // 从 name 构建 path
-                    if (lib.TryGetProperty("name", out var nameElement))
-                    {
-                        var name = nameElement.GetString();
-                        if (!string.IsNullOrEmpty(name))
-                        {
-                            var parts = name.Split(':');
-                            if (parts.Length >= 3)
-                            {
-                                var groupId = parts[0].Replace('.', '/');
-                                var artifactId = parts[1];
-                                var version = parts[2];
-                                libPath = $"{groupId}/{artifactId}/{version}/{artifactId}-{version}.jar";
-                            }
-                        }
-                    }
-                }
-
-                if (string.IsNullOrEmpty(libPath))
-                {
-                    downloaded++;
-                    continue;
-                }
-
-                var fullPath = Path.Combine(librariesDir, libPath);
-                var libDir = Path.GetDirectoryName(fullPath);
-                if (!string.IsNullOrEmpty(libDir))
-                {
-                    Directory.CreateDirectory(libDir);
-                }
-
-                if (File.Exists(fullPath))
-                {
-                    skipped++;
-                    downloaded++;
-                    continue;
-                }
-
-                // 获取下载 URL
-                string? downloadUrl = null;
-                if (artifactElement.TryGetProperty("url", out var urlElement))
-                {
-                    downloadUrl = urlElement.GetString();
-                }
-
-                if (string.IsNullOrEmpty(downloadUrl))
-                {
-                    // 从 name 构建 URL
-                    if (lib.TryGetProperty("name", out var nameElement))
-                    {
-                        var name = nameElement.GetString();
-                        if (!string.IsNullOrEmpty(name))
-                        {
-                            var parts = name.Split(':');
-                            if (parts.Length >= 3)
-                            {
-                                var groupId = parts[0].Replace('.', '/');
-                                var artifactId = parts[1];
-                                var version = parts[2];
-                                downloadUrl = $"{BmclApiBase}/maven/{groupId}/{artifactId}/{version}/{artifactId}-{version}.jar";
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    // 将官方 URL 替换为 BMCLAPI 镜像
-                    downloadUrl = downloadUrl
-                        .Replace("https://libraries.minecraft.net", $"{BmclApiBase}/maven")
-                        .Replace("https://maven.minecraftforge.net", $"{BmclApiBase}/maven")
-                        .Replace("https://maven.fabricmc.net", $"{BmclApiBase}/maven");
-                }
-
-                bool libDownloaded = false;
-                if (!string.IsNullOrEmpty(downloadUrl))
-                {
-                    // 尝试多个 URL
-                    string[] urls = new string[]
-                    {
-                        downloadUrl,
-                        downloadUrl.Replace(BmclApiBase, "https://libraries.minecraft.net"),
-                    };
-
-                    foreach (var url in urls)
-                    {
-                        try
-                        {
-                            await DownloadFileAsync(url, fullPath, cancellationToken);
-                            libDownloaded = true;
-                            break;
-                        }
-                        catch (Exception ex)
-                        {
-                            // 继续尝试下一个 URL
-                        }
-                    }
-                }
-
-                if (!libDownloaded)
-                {
-                    failed++;
-                    if (failed <= 5)
-                    {
-                        AppendLog($"警告: 库文件 {Path.GetFileName(libPath)} 下载失败");
-                    }
-                }
-
-                downloaded++;
-                if (downloaded % 10 == 0 || downloaded == total)
-                {
-                    var progress = 70 + (downloaded * 20 / total);
-                    ReportProgress($"正在下载依赖库 ({downloaded}/{total})", $"{progress}%");
                 }
             }
 
-            AppendLog($"库文件处理完成: {downloaded}/{total}, 跳过已存在: {skipped}, 失败: {failed}");
+            if (libsToDownload.Count == 0)
+            {
+                AppendLog($"库文件处理完成: 0/{total}, 跳过已存在: {skipped}, 失败: {failed}");
+                return;
+            }
+
+            var semaphore = new SemaphoreSlim(16);
+            var tasks = new List<Task>(libsToDownload.Count);
+
+            foreach (var lib in libsToDownload)
+            {
+                await semaphore.WaitAsync(cancellationToken);
+                tasks.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        bool libDownloaded = false;
+                        foreach (var url in lib.Urls.Distinct())
+                        {
+                            try
+                            {
+                                await DownloadFileWithRetryAsync(url, lib.FullPath, 3, cancellationToken);
+                                libDownloaded = true;
+                                break;
+                            }
+                            catch
+                            {
+                                // Continue to fallback URL
+                            }
+                        }
+
+                        if (!libDownloaded)
+                        {
+                            var currentFailed = Interlocked.Increment(ref failed);
+                            if (currentFailed <= 5)
+                            {
+                                AppendLog($"警告: 库文件 {Path.GetFileName(lib.LibPath)} 下载失败");
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                        var current = Interlocked.Increment(ref processed);
+                        if (current % 10 == 0 || current == libsToDownload.Count)
+                        {
+                            var progress = 70 + (current * 20 / libsToDownload.Count);
+                            ReportProgress($"正在下载依赖库 ({current}/{libsToDownload.Count})", $"{progress}%");
+                        }
+                    }
+                }, cancellationToken));
+            }
+
+            await Task.WhenAll(tasks);
+            AppendLog($"库文件处理完成: {processed}/{libsToDownload.Count}, 跳过已存在: {skipped}, 失败: {failed}");
+        }
+
+        private void TryAddLibraryDownloadTask(
+            JsonElement lib,
+            JsonElement fileElement,
+            string librariesDir,
+            List<(string LibPath, string FullPath, string[] Urls)> libsToDownload,
+            ref int skipped)
+        {
+            string? libPath = fileElement.TryGetProperty("path", out var pathElement)
+                ? pathElement.GetString()
+                : null;
+
+            if (string.IsNullOrEmpty(libPath) || libPath.Contains(".."))
+            {
+                return;
+            }
+
+            var fullPath = Path.Combine(librariesDir, libPath);
+            var libDir = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(libDir))
+            {
+                Directory.CreateDirectory(libDir);
+            }
+
+            if (File.Exists(fullPath))
+            {
+                skipped++;
+                return;
+            }
+
+            string? downloadUrl = fileElement.TryGetProperty("url", out var urlElement)
+                ? urlElement.GetString()
+                : null;
+
+            if (string.IsNullOrEmpty(downloadUrl) && lib.TryGetProperty("name", out var fallbackNameElement))
+            {
+                var name = fallbackNameElement.GetString();
+                if (!string.IsNullOrEmpty(name))
+                {
+                    var parts = name.Split(':');
+                    if (parts.Length >= 3)
+                    {
+                        var groupId = parts[0].Replace('.', '/');
+                        var artifactId = parts[1];
+                        var version = parts[2];
+                        var fileName = Path.GetFileName(libPath);
+                        downloadUrl = $"{BmclApiBase}/maven/{groupId}/{artifactId}/{version}/{fileName}";
+                    }
+                }
+            }
+            else if (!string.IsNullOrEmpty(downloadUrl))
+            {
+                downloadUrl = downloadUrl
+                    .Replace("https://libraries.minecraft.net", $"{BmclApiBase}/maven")
+                    .Replace("https://maven.minecraftforge.net", $"{BmclApiBase}/maven")
+                    .Replace("https://maven.fabricmc.net", $"{BmclApiBase}/maven");
+            }
+
+            if (string.IsNullOrEmpty(downloadUrl))
+            {
+                return;
+            }
+
+            libsToDownload.Add((
+                libPath,
+                fullPath,
+                new[]
+                {
+                    downloadUrl,
+                    downloadUrl.Replace(BmclApiBase, "https://libraries.minecraft.net"),
+                }));
         }
 
         /// <summary>
