@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 
 namespace MinecraftLuanch
 {
@@ -13,6 +14,8 @@ namespace MinecraftLuanch
 
     public sealed class BackgroundImageService
     {
+        private const string BuiltInResourcePrefix = "MinecraftLuanch.Assets.Photos.";
+
         private static readonly string[] SupportedExtensions =
         {
             ".jpg", ".jpeg", ".png", ".bmp", ".webp"
@@ -147,13 +150,14 @@ namespace MinecraftLuanch
 
         private static string GetBuiltInPhotosDirectory()
         {
-            var outputPhotosPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "photos");
-            if (HasImages(outputPhotosPath))
-            {
-                return outputPhotosPath;
-            }
+            var builtInPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "JCLauncher",
+                "BuiltInPhotos");
 
-            return FindSourcePhotosDirectory() ?? outputPhotosPath;
+            Directory.CreateDirectory(builtInPath);
+            ExtractBuiltInPhotos(builtInPath);
+            return builtInPath;
         }
 
         private static string GetCustomPhotosDirectory()
@@ -171,21 +175,44 @@ namespace MinecraftLuanch
                    Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories).Any(IsSupportedImage);
         }
 
-        private static string? FindSourcePhotosDirectory()
+        private static void ExtractBuiltInPhotos(string targetDirectory)
         {
-            var current = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-            while (current != null)
+            var assembly = Assembly.GetExecutingAssembly();
+            var resources = assembly.GetManifestResourceNames()
+                .Where(name => name.StartsWith(BuiltInResourcePrefix, StringComparison.OrdinalIgnoreCase))
+                .Where(name => SupportedExtensions.Contains(Path.GetExtension(name), StringComparer.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var resourceName in resources)
             {
-                var candidate = Path.Combine(current.FullName, "Assets", "Photos");
-                if (Directory.Exists(candidate))
+                var fileName = resourceName.Substring(BuiltInResourcePrefix.Length);
+                if (string.IsNullOrWhiteSpace(fileName))
                 {
-                    return candidate;
+                    continue;
                 }
 
-                current = current.Parent;
-            }
+                var targetPath = Path.Combine(targetDirectory, fileName);
+                using var resourceStream = assembly.GetManifestResourceStream(resourceName);
+                if (resourceStream == null)
+                {
+                    continue;
+                }
 
-            return null;
+                var shouldWrite = !File.Exists(targetPath);
+                if (!shouldWrite)
+                {
+                    shouldWrite = new FileInfo(targetPath).Length != resourceStream.Length;
+                    resourceStream.Position = 0;
+                }
+
+                if (!shouldWrite)
+                {
+                    continue;
+                }
+
+                using var fileStream = File.Create(targetPath);
+                resourceStream.CopyTo(fileStream);
+            }
         }
     }
 }
