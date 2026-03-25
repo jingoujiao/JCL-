@@ -20,19 +20,12 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Security.Cryptography;
 using System.Net;
 using Button = System.Windows.Controls.Button;
 using Clipboard = System.Windows.Clipboard;
 
 namespace MinecraftLuanch
 {
-    public class VersionInfo
-    {
-        public string VersionName { get; set; } = string.Empty;
-        public string VersionPath { get; set; } = string.Empty;
-    }
-
     public partial class MainWindow : Window
     {
         private string? _currentVersion;
@@ -53,22 +46,16 @@ namespace MinecraftLuanch
         
         private List<string> _backgroundImages = new();
         private string _lastBackground = "";
-        private Random _random = new();
-        
-        private Dictionary<string, int> _versionJavaRequirements = new()
-        {
-            { "1.21", 21 }, { "1.20.5", 21 }, { "1.20.6", 21 },
-            { "1.20", 17 }, { "1.19", 17 }, { "1.18", 17 },
-            { "1.17", 16 }, { "1.16", 8 }, { "1.15", 8 },
-            { "1.14", 8 }, { "1.13", 8 }, { "1.12", 8 },
-            { "1.11", 8 }, { "1.10", 8 }, { "1.9", 8 },
-            { "1.8", 8 }, { "1.7", 7 }
-        };
+        private readonly Random _random = new();
 
         private CancellationTokenSource? _installCts;
         private CancellationTokenSource? _javaInstallCts;
         
         private double _animationSpeed = 1.0;
+        private readonly LauncherSettingsStore _settingsStore = new();
+        private readonly JavaRuntimeService _javaRuntimeService = new();
+        private readonly VersionManagementService _versionManagementService = new();
+        private readonly BackgroundImageService _backgroundImageService = new();
 
         public MainWindow()
         {
@@ -116,19 +103,7 @@ namespace MinecraftLuanch
 
         private void LoadBackgroundImages()
         {
-            _backgroundImages.Clear();
-            var photosPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "photos");
-            
-            if (Directory.Exists(photosPath))
-            {
-                var extensions = new[] { ".jpg", ".jpeg", ".png", ".bmp", ".webp" };
-                var files = Directory.GetFiles(photosPath)
-                    .Where(f => extensions.Contains(Path.GetExtension(f).ToLower()))
-                    .OrderBy(f => f)
-                    .ToList();
-                
-                _backgroundImages.AddRange(files);
-            }
+            _backgroundImages = _backgroundImageService.LoadBackgroundImages();
         }
 
         private void SetRandomBackground()
@@ -139,11 +114,13 @@ namespace MinecraftLuanch
             }
             
             if (_backgroundImages.Count == 0) return;
-            
-            var available = _backgroundImages.Where(b => b != _lastBackground).ToList();
-            if (available.Count == 0) available = _backgroundImages;
-            
-            var selected = available[_random.Next(available.Count)];
+
+            var selected = _backgroundImageService.PickNextBackground(_backgroundImages, _lastBackground, _random);
+            if (string.IsNullOrWhiteSpace(selected))
+            {
+                return;
+            }
+
             _lastBackground = selected;
             
             try
@@ -523,38 +500,14 @@ namespace MinecraftLuanch
 
         private List<string> TryGetInstalledVersions(string? root)
         {
-            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
-                return new List<string>();
-
-            var versionsDir = Path.Combine(root, "versions");
-            if (!Directory.Exists(versionsDir))
-                return new List<string>();
-
-            var versions = new List<string>();
-
-            foreach (var dir in Directory.GetDirectories(versionsDir))
-            {
-                var dirName = Path.GetFileName(dir);
-                var jsonPath = Path.Combine(dir, $"{dirName}.json");
-                if (File.Exists(jsonPath))
-                {
-                    versions.Add(dirName);
-                }
-            }
-
-            return versions.OrderByDescending(v => v).ToList();
+            return _versionManagementService.GetInstalledVersionNames(root);
         }
 
         private void RefreshJava()
         {
-            var javas = JavaUtil.GetJavas().ToList();
-            var javaPaths = javas
-                .Select(j => j.JavaPath)
-                .Where(IsValidJavaPath)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var javaPaths = _javaRuntimeService.GetInstalledJavaPaths();
             var selectedJava = string.IsNullOrWhiteSpace(_preferredJavaPath) ? JavaPath.Text?.Trim() : _preferredJavaPath;
-            javaPaths = ReorderJavaPathsWithPreferred(javaPaths, selectedJava);
+            javaPaths = _javaRuntimeService.ReorderJavaPathsWithPreferred(javaPaths, selectedJava);
             JavaPath.ItemsSource = javaPaths;
             
             if (!string.IsNullOrWhiteSpace(selectedJava) && javaPaths.Contains(selectedJava))
@@ -564,7 +517,7 @@ namespace MinecraftLuanch
             }
             else if (javaPaths.Count > 0 && !string.IsNullOrWhiteSpace(_currentVersion))
             {
-                SelectCompatibleJava(javas, _currentVersion);
+                SelectCompatibleJava(javaPaths, _currentVersion);
             }
             else if (javaPaths.Count > 0)
             {
@@ -572,7 +525,7 @@ namespace MinecraftLuanch
             }
 
             // If preferred java was deleted, clear stale selection.
-            if (!IsValidJavaPath(_preferredJavaPath))
+            if (!_javaRuntimeService.IsValidJavaPath(_preferredJavaPath))
             {
                 _preferredJavaPath = null;
             }
@@ -628,16 +581,16 @@ namespace MinecraftLuanch
             try
             {
                 var requiredJavaVersion = !string.IsNullOrWhiteSpace(_currentVersion)
-                    ? GetRequiredJavaVersion(_currentVersion)
+                    ? _javaRuntimeService.GetRequiredJavaVersion(_currentVersion)
                     : 17;
-                requiredJavaVersion = ResolveRequestedJavaVersion(requiredJavaVersion);
+                requiredJavaVersion = _javaRuntimeService.ResolveRequestedJavaVersion(_javaTargetVersionKey, requiredJavaVersion);
 
                 var installRoot = _javaInstallRoot;
                 Directory.CreateDirectory(installRoot);
 
                 versionFolder = Path.Combine(installRoot, $"java-{requiredJavaVersion}");
-                var javaExe = FindJavaExecutable(versionFolder);
-                if (IsValidJavaPath(javaExe))
+                var javaExe = _javaRuntimeService.FindJavaExecutable(versionFolder);
+                if (_javaRuntimeService.IsValidJavaPath(javaExe))
                 {
                     SetPreferredJavaPath(javaExe);
                     SaveSettingsToFile();
@@ -646,8 +599,8 @@ namespace MinecraftLuanch
                     return;
                 }
 
-                var (downloadUrl, packageName) = await GetJavaPackageInfoAsync(requiredJavaVersion, cancellationToken);
-                var candidateUrls = BuildJavaDownloadUrls(downloadUrl, packageName, requiredJavaVersion, _javaDownloadSourceKey);
+                var (downloadUrl, packageName) = await _javaRuntimeService.GetJavaPackageInfoAsync(requiredJavaVersion, cancellationToken);
+                var candidateUrls = _javaRuntimeService.BuildJavaDownloadUrls(downloadUrl, packageName, requiredJavaVersion, _javaDownloadSourceKey);
                 tempZipPath = Path.Combine(Path.GetTempPath(), $"jcl-java-{requiredJavaVersion}-{Guid.NewGuid():N}.zip");
                 extractTempDir = Path.Combine(Path.GetTempPath(), $"jcl-java-extract-{Guid.NewGuid():N}");
                 stagingFolder = Path.Combine(installRoot, $"java-{requiredJavaVersion}.staging");
@@ -780,8 +733,8 @@ namespace MinecraftLuanch
 
                 ZipFile.ExtractToDirectory(tempZipPath, extractTempDir, true);
 
-                var extractedJava = FindJavaExecutable(extractTempDir);
-                if (!IsValidJavaPath(extractedJava))
+                var extractedJava = _javaRuntimeService.FindJavaExecutable(extractTempDir);
+                if (!_javaRuntimeService.IsValidJavaPath(extractedJava))
                 {
                     throw new Exception("下载成功但未找到 java.exe/javaw.exe");
                 }
@@ -797,7 +750,7 @@ namespace MinecraftLuanch
                 JavaInstallPercentText.Text = "85%";
                 JavaInstallStatusText.Text = "正在配置 Java 文件...";
 
-                CopyDirectory(jdkRoot, stagingFolder);
+                _versionManagementService.CopyDirectory(jdkRoot, stagingFolder);
 
                 cancellationToken.ThrowIfCancellationRequested();
                 if (Directory.Exists(versionFolder))
@@ -806,8 +759,8 @@ namespace MinecraftLuanch
                 }
                 Directory.Move(stagingFolder, versionFolder);
 
-                var installedJava = FindJavaExecutable(versionFolder);
-                if (!IsValidJavaPath(installedJava))
+                var installedJava = _javaRuntimeService.FindJavaExecutable(versionFolder);
+                if (!_javaRuntimeService.IsValidJavaPath(installedJava))
                 {
                     throw new Exception("安装后未找到 Java 可执行文件");
                 }
@@ -885,81 +838,6 @@ namespace MinecraftLuanch
             }
         }
 
-        private static string? FindJavaExecutable(string rootDir)
-        {
-            if (!Directory.Exists(rootDir))
-            {
-                return null;
-            }
-
-            var javaw = Directory.GetFiles(rootDir, "javaw.exe", SearchOption.AllDirectories).FirstOrDefault();
-            if (!string.IsNullOrWhiteSpace(javaw))
-            {
-                return javaw;
-            }
-
-            return Directory.GetFiles(rootDir, "java.exe", SearchOption.AllDirectories).FirstOrDefault();
-        }
-
- private static List<(string Url, string SourceKey)> BuildJavaDownloadUrls(
-            string officialUrl,
-            string packageName,
-            int javaVersion,
-            string preferredSourceKey)
-        {
-            var tunaUrl = $"https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{javaVersion}/jdk/x64/windows/{packageName}";
-            
-            var all = new List<(string Url, string SourceKey)>
-            {
-                (tunaUrl, "tuna"),
-                (officialUrl, "official"),
-            };
-
-            return all;
-        }
-
-        private static async Task<(string DownloadUrl, string PackageName)> GetJavaPackageInfoAsync(int javaVersion, CancellationToken cancellationToken)
-        {
-            var apiUrl =
-                $"https://api.adoptium.net/v3/assets/latest/{javaVersion}/hotspot?os=windows&architecture=x64&image_type=jdk&jvm_impl=hotspot&heap_size=normal&vendor=eclipse";
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-            using var response = await client.GetAsync(apiUrl, cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() == 0)
-            {
-                throw new Exception($"未找到 Java {javaVersion} 的可用安装包");
-            }
-
-            var first = root[0];
-            if (!first.TryGetProperty("binary", out var binary) ||
-                !binary.TryGetProperty("package", out var package) ||
-                !package.TryGetProperty("link", out var linkElement))
-            {
-                throw new Exception("Java 下载信息格式异常（缺少 link）");
-            }
-
-            var link = linkElement.GetString();
-            if (string.IsNullOrWhiteSpace(link))
-            {
-                throw new Exception("Java 下载地址为空");
-            }
-
-            var packageName = package.TryGetProperty("name", out var nameElement)
-                ? nameElement.GetString()
-                : Path.GetFileName(new Uri(link).AbsolutePath);
-
-            if (string.IsNullOrWhiteSpace(packageName))
-            {
-                throw new Exception("无法解析 Java 包名");
-            }
-
-            return (link, packageName);
-        }
-
         private static string FormatSpeed(double bytesPerSec)
         {
             if (bytesPerSec <= 0)
@@ -1031,27 +909,9 @@ namespace MinecraftLuanch
             _javaTargetVersionKey = "auto";
         }
 
-        private int ResolveRequestedJavaVersion(int autoRequiredVersion)
-        {
-            if (int.TryParse(_javaTargetVersionKey, out var selected))
-            {
-                return Math.Max(8, selected);
-            }
-
-            return Math.Max(8, autoRequiredVersion);
-        }
-
         private void UpdateJavaVersionHint()
         {
-            var autoRequiredVersion = !string.IsNullOrWhiteSpace(_currentVersion)
-                ? GetRequiredJavaVersion(_currentVersion)
-                : 17;
-            var resolvedVersion = ResolveRequestedJavaVersion(autoRequiredVersion);
-
-            var targetVersionText = _javaTargetVersionKey == "auto"
-                ? $"自动（当前版本建议 Java {autoRequiredVersion}）"
-                : $"手动选择 Java {resolvedVersion}";
-            JavaVersionHintText.Text = $"当前选择：{targetVersionText}；对应关系：1.21+ -> Java 21，1.17-1.20 -> Java 17，1.16及以下 -> Java 8";
+            JavaVersionHintText.Text = _javaRuntimeService.BuildJavaVersionHint(_currentVersion, _javaTargetVersionKey);
         }
 
         private void JavaTargetVersion_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1105,18 +965,6 @@ namespace MinecraftLuanch
             _javaDownloadSourceKey = "tuna";
         }
 
-        private List<string> ReorderJavaPathsWithPreferred(List<string> javaPaths, string? preferredPath)
-        {
-            if (string.IsNullOrWhiteSpace(preferredPath) || !IsValidJavaPath(preferredPath))
-            {
-                return javaPaths;
-            }
-
-            javaPaths.RemoveAll(p => string.Equals(p, preferredPath, StringComparison.OrdinalIgnoreCase));
-            javaPaths.Insert(0, preferredPath);
-            return javaPaths;
-        }
-
         private void SetPreferredJavaPath(string? javaPath)
         {
             var normalizedPath = javaPath?.Trim();
@@ -1130,27 +978,10 @@ namespace MinecraftLuanch
             var currentItems = (JavaPath.ItemsSource as IEnumerable<string>)?.ToList()
                 ?? JavaPath.Items.Cast<object>().Select(i => i?.ToString() ?? string.Empty).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
 
-            currentItems = ReorderJavaPathsWithPreferred(currentItems, normalizedPath);
+            currentItems = _javaRuntimeService.ReorderJavaPathsWithPreferred(currentItems, normalizedPath);
             JavaPath.ItemsSource = currentItems;
             JavaPath.SelectedItem = normalizedPath;
             JavaPath.Text = normalizedPath;
-        }
-
-        private static bool IsValidJavaPath(string? javaPath)
-        {
-            if (string.IsNullOrWhiteSpace(javaPath))
-            {
-                return false;
-            }
-
-            if (!File.Exists(javaPath))
-            {
-                return false;
-            }
-
-            var fileName = Path.GetFileName(javaPath);
-            return fileName.Equals("java.exe", StringComparison.OrdinalIgnoreCase) ||
-                   fileName.Equals("javaw.exe", StringComparison.OrdinalIgnoreCase);
         }
 
         private void PromptDownloadJava()
@@ -1175,113 +1006,14 @@ namespace MinecraftLuanch
             }
         }
 
-        private void SelectCompatibleJava(List<StarLight_Core.Models.Utilities.JavaInfo> javas, string version)
+        private void SelectCompatibleJava(List<string> javaPaths, string version)
         {
-            var requiredJavaVersion = GetRequiredJavaVersion(version);
-            
-            int bestIndex = -1;
-            int bestVersion = int.MaxValue;
-            
-            for (int i = 0; i < javas.Count; i++)
+            var bestPath = _javaRuntimeService.SelectCompatibleJavaPath(javaPaths, version);
+            if (!string.IsNullOrWhiteSpace(bestPath))
             {
-                var javaPath = javas[i].JavaPath;
-                var javaVersion = GetJavaVersion(javaPath);
-                
-                if (javaVersion >= requiredJavaVersion && javaVersion < bestVersion)
-                {
-                    bestVersion = javaVersion;
-                    bestIndex = i;
-                }
+                JavaPath.SelectedItem = bestPath;
+                JavaPath.Text = bestPath;
             }
-            
-            if (bestIndex == -1)
-            {
-                int maxVersion = 0;
-                for (int i = 0; i < javas.Count; i++)
-                {
-                    var javaPath = javas[i].JavaPath;
-                    var javaVersion = GetJavaVersion(javaPath);
-                    if (javaVersion > maxVersion)
-                    {
-                        maxVersion = javaVersion;
-                        bestIndex = i;
-                    }
-                }
-            }
-            
-            if (bestIndex >= 0)
-            {
-                JavaPath.SelectedIndex = bestIndex;
-            }
-        }
-
-        private int GetJavaVersion(string javaPath)
-        {
-            try
-            {
-                var processStartInfo = new ProcessStartInfo
-                {
-                    FileName = javaPath,
-                    Arguments = "-version",
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-
-                using var process = Process.Start(processStartInfo);
-                var output = process?.StandardError.ReadToEnd() ?? "";
-                
-                var startIndex = output.IndexOf('"');
-                var endIndex = output.IndexOf('"', startIndex + 1);
-                
-                if (startIndex >= 0 && endIndex > startIndex)
-                {
-                    var versionString = output.Substring(startIndex + 1, endIndex - startIndex - 1);
-                    var parts = versionString.Split('.');
-                    
-                    if (parts.Length >= 1)
-                    {
-                        if (parts[0] == "1")
-                        {
-                            if (parts.Length >= 2 && int.TryParse(parts[1], out var minorVersion))
-                            {
-                                return minorVersion;
-                            }
-                        }
-                        else if (int.TryParse(parts[0], out var majorVersion))
-                        {
-                            return majorVersion;
-                        }
-                    }
-                }
-            }
-            catch { }
-            
-            return 8;
-        }
-
-        private int GetRequiredJavaVersion(string minecraftVersion)
-        {
-            var parts = minecraftVersion.Split('.');
-            if (parts.Length >= 2)
-            {
-                var majorVersion = $"{parts[0]}.{parts[1]}";
-                if (_versionJavaRequirements.TryGetValue(majorVersion, out var version))
-                {
-                    return version;
-                }
-                
-                if (int.TryParse(parts[0], out var firstPart))
-                {
-                    if (firstPart >= 21) return 21;
-                    if (firstPart >= 20) return 21;
-                    if (firstPart >= 17) return 17;
-                    if (firstPart >= 16) return 16;
-                    return 8;
-                }
-            }
-            
-            return 8;
         }
 
         private void BrowseRoot_Click(object sender, RoutedEventArgs e)
@@ -1293,6 +1025,22 @@ namespace MinecraftLuanch
             if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
                 GameRoot.Text = dialog.SelectedPath;
+            }
+        }
+
+        private void OpenAfdianButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "https://afdian.com/a/jingoujiao",
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MyMessageBox.Show($"打开爱发电页面失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -1403,37 +1151,8 @@ namespace MinecraftLuanch
         private void RefreshVersionsList()
         {
             var root = GameRoot.Text?.Trim();
-            var versions = GetInstalledVersions(root);
+            var versions = _versionManagementService.GetInstalledVersions(root);
             VersionsList.ItemsSource = versions;
-        }
-
-        private List<VersionInfo> GetInstalledVersions(string? root)
-        {
-            var versions = new List<VersionInfo>();
-            
-            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
-                return versions;
-
-            var versionsDir = Path.Combine(root, "versions");
-            if (!Directory.Exists(versionsDir))
-                return versions;
-
-            foreach (var dir in Directory.GetDirectories(versionsDir))
-            {
-                var dirName = Path.GetFileName(dir);
-                var jsonPath = Path.Combine(dir, $"{dirName}.json");
-                
-                if (File.Exists(jsonPath))
-                {
-                    versions.Add(new VersionInfo
-                    {
-                        VersionName = dirName,
-                        VersionPath = dir
-                    });
-                }
-            }
-
-            return versions.OrderByDescending(v => v.VersionName).ToList();
         }
 
         private void RefreshVersionsListButton_Click(object sender, RoutedEventArgs e)
@@ -1470,32 +1189,13 @@ namespace MinecraftLuanch
                 var root = GameRoot.Text?.Trim();
                 if (string.IsNullOrWhiteSpace(root)) return;
 
-                var oldVersionPath = Path.Combine(root, "versions", oldVersionName);
-                if (!Directory.Exists(oldVersionPath)) return;
-
                 var input = InputDialog.Show("请输入新的版本名称：", "重命名版本", oldVersionName);
                 
                 if (string.IsNullOrWhiteSpace(input) || input == oldVersionName) return;
 
-                var newVersionPath = Path.Combine(root, "versions", input);
-                if (Directory.Exists(newVersionPath))
-                {
-                    MyMessageBox.Show("目标版本名称已存在！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
-
                 try
                 {
-                    Directory.Move(oldVersionPath, newVersionPath);
-                    
-                    var oldJsonPath = Path.Combine(newVersionPath, $"{oldVersionName}.json");
-                    var newJsonPath = Path.Combine(newVersionPath, $"{input}.json");
-                    if (File.Exists(oldJsonPath)) File.Move(oldJsonPath, newJsonPath);
-
-                    var oldJarPath = Path.Combine(newVersionPath, $"{oldVersionName}.jar");
-                    var newJarPath = Path.Combine(newVersionPath, $"{input}.jar");
-                    if (File.Exists(oldJarPath)) File.Move(oldJarPath, newJarPath);
-
+                    _versionManagementService.RenameVersion(root, oldVersionName, input);
                     RefreshVersionsList();
                     RefreshVersions();
                     MyMessageBox.Show($"版本重命名成功！\n\n从：{oldVersionName}\n到：{input}", 
@@ -1515,9 +1215,6 @@ namespace MinecraftLuanch
                 var root = GameRoot.Text?.Trim();
                 if (string.IsNullOrWhiteSpace(root)) return;
 
-                var versionPath = Path.Combine(root, "versions", versionName);
-                if (!Directory.Exists(versionPath)) return;
-
                 var result = MyMessageBox.Show(
                     $"确定要删除版本 \"{versionName}\" 吗？\n\n此操作不可恢复！",
                     "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning);
@@ -1526,7 +1223,7 @@ namespace MinecraftLuanch
                 {
                     try
                     {
-                        Directory.Delete(versionPath, true);
+                        _versionManagementService.DeleteVersion(root, versionName);
                         RefreshVersionsList();
                         RefreshVersions();
                         MyMessageBox.Show("版本已删除！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -1541,76 +1238,58 @@ namespace MinecraftLuanch
 
         private void ImportVersionButton_Click(object sender, RoutedEventArgs e)
         {
-            using var dialog = new System.Windows.Forms.OpenFileDialog
+            using var dialog = new System.Windows.Forms.FolderBrowserDialog
             {
-                Title = "选择版本文件夹",
-                Filter = "版本文件夹|*.*|所有文件|*.*",
-                Multiselect = false
+                Description = "选择要导入的 Minecraft 版本文件夹",
+                ShowNewFolderButton = false
             };
 
             if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
-                var sourcePath = dialog.FileName;
+                var sourcePath = dialog.SelectedPath;
                 var root = GameRoot.Text?.Trim();
                 
                 if (string.IsNullOrWhiteSpace(root)) return;
 
-                var versionsDir = Path.Combine(root, "versions");
-                Directory.CreateDirectory(versionsDir);
-
-                var sourceFolderName = Path.GetFileNameWithoutExtension(sourcePath);
-                if (string.IsNullOrEmpty(sourceFolderName)) return;
-
-                var destPath = Path.Combine(versionsDir, sourceFolderName);
-
-                if (Directory.Exists(destPath))
-                {
-                    var result = MyMessageBox.Show(
-                        $"目标版本 \"{sourceFolderName}\" 已存在，是否覆盖？",
-                        "确认覆盖", MessageBoxButton.YesNo, MessageBoxImage.Question);
-
-                    if (result != MessageBoxResult.Yes) return;
-                    
-                    try { Directory.Delete(destPath, true); }
-                    catch { return; }
-                }
-
                 try
                 {
-                    if (File.Exists(sourcePath))
+                    var sourceFolderName = Path.GetFileName(sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    var shouldOverwrite = false;
+                    if (!string.IsNullOrWhiteSpace(sourceFolderName))
                     {
-                        File.Copy(sourcePath, destPath, true);
-                    }
-                    else if (Directory.Exists(sourcePath))
-                    {
-                        CopyDirectory(sourcePath, destPath);
+                        var existingVersionPath = _versionManagementService.GetVersionPath(root, sourceFolderName);
+                        if (Directory.Exists(existingVersionPath))
+                        {
+                            var result = MyMessageBox.Show(
+                                $"目标版本 \"{sourceFolderName}\" 已存在，是否覆盖？",
+                                "确认覆盖", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+                            if (result != MessageBoxResult.Yes)
+                            {
+                                return;
+                            }
+
+                            shouldOverwrite = true;
+                        }
                     }
 
+                    var importedVersionName = _versionManagementService.ImportVersion(root, sourcePath, shouldOverwrite);
                     RefreshVersionsList();
                     RefreshVersions();
-                    MyMessageBox.Show($"版本导入成功！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MyMessageBox.Show($"版本 {importedVersionName} 导入成功！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (FileNotFoundException ex) when (!string.IsNullOrWhiteSpace(ex.FileName))
+                {
+                    MyMessageBox.Show(
+                        $"所选文件夹缺少版本描述文件：\n{ex.FileName}",
+                        "无法导入",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
                 }
                 catch (Exception ex)
                 {
                     MyMessageBox.Show($"导入失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
-            }
-        }
-
-        private void CopyDirectory(string sourceDir, string destDir)
-        {
-            Directory.CreateDirectory(destDir);
-
-            foreach (var file in Directory.GetFiles(sourceDir))
-            {
-                var destFile = Path.Combine(destDir, Path.GetFileName(file));
-                File.Copy(file, destFile, true);
-            }
-
-            foreach (var subDir in Directory.GetDirectories(sourceDir))
-            {
-                var destSubDir = Path.Combine(destDir, Path.GetFileName(subDir));
-                CopyDirectory(subDir, destSubDir);
             }
         }
 
@@ -1625,55 +1304,66 @@ namespace MinecraftLuanch
 
             if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
-                var photosPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "photos");
-                Directory.CreateDirectory(photosPath);
-                
-                int count = _backgroundImages.Count + 1;
-                
-                foreach (var file in dialog.FileNames)
-                {
-                    try
-                    {
-                        var destFile = Path.Combine(photosPath, $"bg{count}.jpg");
-                        File.Copy(file, destFile, true);
-                        count++;
-                    }
-                    catch { }
-                }
+                var result = _backgroundImageService.AddBackgrounds(dialog.FileNames);
                 
                 LoadBackgroundImages();
                 UpdateBackgroundCount();
                 SetRandomBackground();
                 
-                MyMessageBox.Show($"已添加 {dialog.FileNames.Length} 张背景图片！", 
-                    "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                if (result.FailedCount == 0)
+                {
+                    MyMessageBox.Show($"已添加 {result.SuccessCount} 张背景图片！", 
+                        "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    MyMessageBox.Show(
+                        $"成功添加 {result.SuccessCount} 张背景图片，失败 {result.FailedCount} 张。",
+                        "部分完成",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
             }
         }
 
         private void ClearBackgrounds_Click(object sender, RoutedEventArgs e)
         {
+            var hasBuiltInBackgrounds = _backgroundImageService.HasBuiltInBackgrounds();
             var result = MyMessageBox.Show(
-                "确定要清空所有背景图片吗？\n\n此操作不可恢复！",
+                hasBuiltInBackgrounds
+                    ? "确定要清空所有自定义背景图片吗？\n\n内置背景将保留。"
+                    : "确定要清空所有背景图片吗？\n\n此操作不可恢复！",
                 "确认清空", MessageBoxButton.YesNo, MessageBoxImage.Warning);
 
             if (result == MessageBoxResult.Yes)
             {
-                var photosPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "photos");
-                
                 try
                 {
-                    if (Directory.Exists(photosPath))
+                    var removedCount = _backgroundImageService.ClearCustomBackgrounds();
+                    LoadBackgroundImages();
+                    _lastBackground = string.Empty;
+                    if (_backgroundImages.Count == 0)
                     {
-                        foreach (var file in Directory.GetFiles(photosPath))
-                        {
-                            File.Delete(file);
-                        }
+                        BackgroundImage.Source = null;
                     }
-                    
-                    _backgroundImages.Clear();
+                    else
+                    {
+                        SetRandomBackground();
+                    }
                     UpdateBackgroundCount();
-                    
-                    MyMessageBox.Show("背景图片已清空！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                    if (removedCount == 0)
+                    {
+                        MyMessageBox.Show("当前没有自定义背景可以清空。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                    else if (hasBuiltInBackgrounds)
+                    {
+                        MyMessageBox.Show("自定义背景已清空，内置背景仍可使用。", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                    else
+                    {
+                        MyMessageBox.Show("背景图片已清空！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1684,203 +1374,110 @@ namespace MinecraftLuanch
 
         private void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
         {
+            if (!int.TryParse(MaxMemory.Text, out var maxMem))
+            {
+                MyMessageBox.Show("内存设置必须是数字！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            if (maxMem < 512)
+            {
+                MyMessageBox.Show("最大内存太小，建议至少 512MB。", "警告", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!SaveSettingsToFile(true))
+            {
+                return;
+            }
+
+            RefreshVersions();
+            RefreshJava();
+
+            MyMessageBox.Show("设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private bool SaveSettingsToFile(bool showErrorMessage = false)
+        {
             try
             {
-                if (!int.TryParse(MaxMemory.Text, out var maxMem))
+                _settingsStore.Save(new LauncherSettingsData
                 {
-                    MyMessageBox.Show("内存设置必须是数字！", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
-
-                if (maxMem < 512)
-                {
-                    MyMessageBox.Show("最大内存太小，建议至少 512MB。", "警告", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
-
-                SaveSettingsToFile();
-                RefreshVersions();
-                RefreshJava();
-
-                MyMessageBox.Show("设置已保存！", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                    GameRoot = GameRoot.Text ?? string.Empty,
+                    MaxMemory = MaxMemory.Text ?? string.Empty,
+                    PlayerName = PlayerName.Text ?? string.Empty,
+                    JavaPath = (_preferredJavaPath ?? JavaPath.Text ?? string.Empty).Trim(),
+                    JavaTargetVersion = _javaTargetVersionKey,
+                    JavaDownloadSource = _javaDownloadSourceKey,
+                    FullScreen = FullScreen.IsChecked,
+                    AnimationSpeed = _animationSpeed,
+                    IsOnlineMode = _isOnlineMode,
+                    AccessToken = _cachedTokenInfo?.AccessToken ?? string.Empty,
+                    RefreshToken = _cachedTokenInfo?.RefreshToken ?? string.Empty,
+                    PlayerNameOnline = _cachedPlayerName ?? string.Empty
+                });
+                return true;
             }
             catch (Exception ex)
             {
-                MyMessageBox.Show($"保存设置失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-        // AES requires a 32-byte key and a 16-byte IV.
-        private static readonly byte[] EncryptionKey = Encoding.UTF8.GetBytes("JCLauncher2024SecretKey32Bytes!!");
-        private static readonly byte[] EncryptionIV = Encoding.UTF8.GetBytes("JCLInitVector16B");
-
-        private string EncryptString(string plainText)
-        {
-            using var aes = Aes.Create();
-            aes.Key = EncryptionKey;
-            aes.IV = EncryptionIV;
-            
-            var encryptor = aes.CreateEncryptor(aes.Key, aes.IV);
-            using var msEncrypt = new MemoryStream();
-            using var csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write);
-            using (var swEncrypt = new StreamWriter(csEncrypt))
-            {
-                swEncrypt.Write(plainText);
-            }
-            return Convert.ToBase64String(msEncrypt.ToArray());
-        }
-
-        private string DecryptString(string cipherText)
-        {
-            try
-            {
-                var buffer = Convert.FromBase64String(cipherText);
-                using var aes = Aes.Create();
-                aes.Key = EncryptionKey;
-                aes.IV = EncryptionIV;
-                
-                var decryptor = aes.CreateDecryptor(aes.Key, aes.IV);
-                using var msDecrypt = new MemoryStream(buffer);
-                using var csDecrypt = new CryptoStream(msDecrypt, decryptor, CryptoStreamMode.Read);
-                using var srDecrypt = new StreamReader(csDecrypt);
-                return srDecrypt.ReadToEnd();
-            }
-            catch
-            {
-                return string.Empty;
-            }
-        }
-
-        private string DecryptStringOrFallback(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-            {
-                return string.Empty;
-            }
-
-            var decrypted = DecryptString(value);
-            return string.IsNullOrEmpty(decrypted) ? value : decrypted;
-        }
-
-        private void SaveSettingsToFile()
-        {
-            try
-            {
-                var appPath = AppDomain.CurrentDomain.BaseDirectory;
-                var configPath = Path.Combine(appPath, "settings.dat");
-
-                var config = new StringBuilder();
-                config.AppendLine($"GameRoot={GameRoot.Text}");
-                config.AppendLine($"MaxMemory={MaxMemory.Text}");
-                config.AppendLine($"PlayerName={EncryptString(PlayerName.Text ?? string.Empty)}");
-                config.AppendLine($"JavaPath={EncryptString((_preferredJavaPath ?? JavaPath.Text ?? string.Empty).Trim())}");
-                config.AppendLine($"JavaTargetVersion={_javaTargetVersionKey}");
-                config.AppendLine($"JavaDownloadSource={_javaDownloadSourceKey}");
-                config.AppendLine($"FullScreen={FullScreen.IsChecked}");
-                config.AppendLine($"AnimationSpeed={_animationSpeed}");
-                config.AppendLine($"IsOnlineMode={_isOnlineMode}");
-                
-                if (_isOnlineMode && _cachedTokenInfo != null)
+                if (showErrorMessage)
                 {
-                    config.AppendLine($"AccessToken={EncryptString(_cachedTokenInfo.AccessToken)}");
-                    config.AppendLine($"RefreshToken={EncryptString(_cachedTokenInfo.RefreshToken)}");
-                    config.AppendLine($"PlayerNameOnline={EncryptString(_cachedPlayerName ?? "")}");
+                    MyMessageBox.Show($"保存设置失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
 
-                var encryptedData = EncryptString(config.ToString());
-                File.WriteAllText(configPath, encryptedData);
+                return false;
             }
-            catch { }
         }
 
         private void LoadSettingsFromFile()
         {
             try
             {
-                var appPath = AppDomain.CurrentDomain.BaseDirectory;
-                var configPath = Path.Combine(appPath, "settings.dat");
-
-                if (File.Exists(configPath))
+                var settings = _settingsStore.Load();
+                if (settings != null)
                 {
-                    var encryptedData = File.ReadAllText(configPath);
-                    var configText = DecryptString(encryptedData);
-                    
-                    if (string.IsNullOrEmpty(configText)) return;
-                    
-                    var config = configText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-                    string? accessToken = null;
-                    string? refreshToken = null;
-                    string? playerNameOnline = null;
-                    
-                    foreach (var line in config)
-                    {
-                        var parts = line.Split('=', 2);
-                        if (parts.Length == 2)
-                        {
-                            var key = parts[0].Trim();
-                            var value = parts[1].Trim();
+                    GameRoot.Text = settings.GameRoot;
+                    MaxMemory.Text = settings.MaxMemory;
+                    PlayerName.Text = settings.PlayerName;
+                    _preferredJavaPath = settings.JavaPath;
 
-                            switch (key)
-                            {
-                                case "GameRoot":
-                                    GameRoot.Text = value;
-                                    break;
-                                case "MaxMemory":
-                                    MaxMemory.Text = value;
-                                    break;
-                                case "PlayerName":
-                                    PlayerName.Text = DecryptStringOrFallback(value);
-                                    break;
-                                case "JavaPath":
-                                    _preferredJavaPath = DecryptStringOrFallback(value);
-                                    break;
-                                case "JavaTargetVersion":
-                                    _javaTargetVersionKey = value;
-                                    break;
-                                case "JavaDownloadSource":
-                                    _javaDownloadSourceKey = value;
-                                    break;
-                                case "FullScreen":
-                                    if (bool.TryParse(value, out var fullScreen))
-                                    {
-                                        FullScreen.IsChecked = fullScreen;
-                                    }
-                                    break;
-                                case "AnimationSpeed":
-                                    if (double.TryParse(value, out var animSpeed))
-                                    {
-                                        _animationSpeed = animSpeed;
-                                        AnimationSpeedSlider.Value = animSpeed;
-                                        AnimationSpeedText.Text = $"{animSpeed:F1}x";
-                                    }
-                                    break;
-                                case "IsOnlineMode":
-                                    if (bool.TryParse(value, out var isOnline))
-                                    {
-                                        _isOnlineMode = isOnline;
-                                    }
-                                    break;
-                                case "AccessToken":
-                                    accessToken = DecryptString(value);
-                                    break;
-                                case "RefreshToken":
-                                    refreshToken = DecryptString(value);
-                                    break;
-                                case "PlayerNameOnline":
-                                    playerNameOnline = DecryptString(value);
-                                    break;
-                            }
-                        }
+                    if (!string.IsNullOrWhiteSpace(settings.JavaTargetVersion))
+                    {
+                        _javaTargetVersionKey = settings.JavaTargetVersion;
                     }
-                    
-                    if (_isOnlineMode && !string.IsNullOrEmpty(accessToken) && !string.IsNullOrEmpty(refreshToken))
+
+                    if (!string.IsNullOrWhiteSpace(settings.JavaDownloadSource))
+                    {
+                        _javaDownloadSourceKey = settings.JavaDownloadSource;
+                    }
+
+                    if (settings.FullScreen.HasValue)
+                    {
+                        FullScreen.IsChecked = settings.FullScreen.Value;
+                    }
+
+                    if (settings.AnimationSpeed.HasValue)
+                    {
+                        _animationSpeed = settings.AnimationSpeed.Value;
+                        AnimationSpeedSlider.Value = _animationSpeed;
+                        AnimationSpeedText.Text = $"{_animationSpeed:F1}x";
+                    }
+
+                    if (settings.IsOnlineMode.HasValue)
+                    {
+                        _isOnlineMode = settings.IsOnlineMode.Value;
+                    }
+
+                    if (_isOnlineMode &&
+                        !string.IsNullOrEmpty(settings.AccessToken) &&
+                        !string.IsNullOrEmpty(settings.RefreshToken))
                     {
                         _cachedTokenInfo = new GetTokenResponse
                         {
-                            AccessToken = accessToken,
-                            RefreshToken = refreshToken
+                            AccessToken = settings.AccessToken,
+                            RefreshToken = settings.RefreshToken
                         };
-                        _cachedPlayerName = playerNameOnline;
+                        _cachedPlayerName = settings.PlayerNameOnline;
                     }
 
                     SetJavaTargetVersionSelection(_javaTargetVersionKey);
@@ -1888,7 +1485,10 @@ namespace MinecraftLuanch
                     UpdateJavaVersionHint();
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MyMessageBox.Show($"读取设置失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private async void StartGame_Click(object sender, RoutedEventArgs e)
@@ -1936,7 +1536,7 @@ namespace MinecraftLuanch
                     return;
                 }
 
-                if (!IsValidJavaPath(java))
+                if (!_javaRuntimeService.IsValidJavaPath(java))
                 {
                     var chooseJava = MyMessageBox.Show(
                         "当前 Java 路径无效（可能已被删除）。\n\n是否现在选择新的 Java 可执行文件？",
@@ -1950,7 +1550,7 @@ namespace MinecraftLuanch
                         java = JavaPath.Text?.Trim();
                     }
 
-                    if (!IsValidJavaPath(java))
+                    if (!_javaRuntimeService.IsValidJavaPath(java))
                     {
                         PromptDownloadJava();
                         return;
@@ -1958,8 +1558,8 @@ namespace MinecraftLuanch
                 }
                 java = java!.Trim();
 
-                var requiredJavaVersion = GetRequiredJavaVersion(version);
-                var currentJavaVersion = GetJavaVersion(java);
+                var requiredJavaVersion = _javaRuntimeService.GetRequiredJavaVersion(version);
+                var currentJavaVersion = _javaRuntimeService.GetJavaVersion(java);
                 
                 if (currentJavaVersion < requiredJavaVersion)
                 {
@@ -1974,12 +1574,10 @@ namespace MinecraftLuanch
                     
                     if (result == MessageBoxResult.No)
                     {
-                        var javas = JavaUtil.GetJavas()
-                            .Where(j => IsValidJavaPath(j.JavaPath))
-                            .ToList();
-                        if (javas.Count > 0)
+                        var javaPaths = _javaRuntimeService.GetInstalledJavaPaths();
+                        if (javaPaths.Count > 0)
                         {
-                            SelectCompatibleJava(javas, version);
+                            SelectCompatibleJava(javaPaths, version);
                             MyMessageBox.Show("已自动为您切换到兼容的 Java 版本，请重新点击开始游戏。", 
                                 "提示", MessageBoxButton.OK, MessageBoxImage.Information);
                         }

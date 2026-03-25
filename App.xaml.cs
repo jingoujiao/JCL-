@@ -1,6 +1,4 @@
 using System;
-using System.Configuration;
-using System.Data;
 using System.Windows;
 using MessageBox = System.Windows.MessageBox;
 
@@ -13,11 +11,12 @@ namespace MinecraftLuanch
     {
         protected override void OnStartup(StartupEventArgs e)
         {
-            AppDomain.CurrentDomain.UnhandledException += (sender, args) => 
+            AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
             {
                 var ex = args.ExceptionObject as Exception;
                 var innerEx = ex?.InnerException;
-                var message = $"未处理的异常：{ex?.Message}";
+                var message = $"未处理异常：{ex?.Message}";
+
                 if (innerEx != null)
                 {
                     message += $"\n\n内部异常：{innerEx.Message}\n{innerEx.StackTrace}";
@@ -26,14 +25,16 @@ namespace MinecraftLuanch
                 {
                     message += $"\n\n{ex?.StackTrace}";
                 }
+
                 MessageBox.Show(message, "错误", MessageBoxButton.OK, MessageBoxImage.Error);
             };
 
-            DispatcherUnhandledException += (sender, args) => 
+            DispatcherUnhandledException += (sender, args) =>
             {
                 var ex = args.Exception;
                 var innerEx = ex?.InnerException;
                 var message = $"UI 线程异常：{ex?.Message}";
+
                 if (innerEx != null)
                 {
                     message += $"\n\n内部异常：{innerEx.Message}\n\n{innerEx.StackTrace}";
@@ -42,6 +43,7 @@ namespace MinecraftLuanch
                 {
                     message += $"\n\n{ex?.StackTrace}";
                 }
+
                 MessageBox.Show(message, "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 args.Handled = true;
             };

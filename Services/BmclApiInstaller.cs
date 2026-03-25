@@ -114,7 +114,7 @@ namespace MinecraftLuanch
             catch
             {
                 // 如果 BMCLAPI 也失败，使用内置的常用版本列表
-                return GetFallbackVersionList();
+                return GetUpdatedFallbackVersionList();
             }
         }
 
@@ -222,6 +222,54 @@ namespace MinecraftLuanch
             return versions;
         }
 
+        private static List<MinecraftVersionInfo> GetUpdatedFallbackVersionList()
+        {
+            return new List<MinecraftVersionInfo>
+            {
+                new MinecraftVersionInfo { Id = "26.1", Type = "release", ReleaseTime = DateTime.Parse("2026-03-24") },
+                new MinecraftVersionInfo { Id = "1.21.11", Type = "release", ReleaseTime = DateTime.Parse("2025-12-09") },
+                new MinecraftVersionInfo { Id = "1.21.10", Type = "release", ReleaseTime = DateTime.Parse("2025-10-07") },
+                new MinecraftVersionInfo { Id = "1.21.9", Type = "release", ReleaseTime = DateTime.Parse("2025-09-30") },
+                new MinecraftVersionInfo { Id = "1.21.8", Type = "release", ReleaseTime = DateTime.Parse("2025-07-17") },
+                new MinecraftVersionInfo { Id = "1.21.7", Type = "release", ReleaseTime = DateTime.Parse("2025-06-30") },
+                new MinecraftVersionInfo { Id = "1.21.6", Type = "release", ReleaseTime = DateTime.Parse("2025-06-17") },
+                new MinecraftVersionInfo { Id = "1.21.5", Type = "release", ReleaseTime = DateTime.Parse("2025-03-25") },
+                new MinecraftVersionInfo { Id = "1.21.4", Type = "release", ReleaseTime = DateTime.Parse("2024-12-03") },
+                new MinecraftVersionInfo { Id = "1.21.3", Type = "release", ReleaseTime = DateTime.Parse("2024-10-23") },
+                new MinecraftVersionInfo { Id = "1.21.2", Type = "release", ReleaseTime = DateTime.Parse("2024-10-22") },
+                new MinecraftVersionInfo { Id = "1.21.1", Type = "release", ReleaseTime = DateTime.Parse("2024-08-08") },
+                new MinecraftVersionInfo { Id = "1.21", Type = "release", ReleaseTime = DateTime.Parse("2024-06-13") },
+                new MinecraftVersionInfo { Id = "1.20.6", Type = "release", ReleaseTime = DateTime.Parse("2024-04-29") },
+                new MinecraftVersionInfo { Id = "1.20.5", Type = "release", ReleaseTime = DateTime.Parse("2024-04-23") },
+                new MinecraftVersionInfo { Id = "1.20.4", Type = "release", ReleaseTime = DateTime.Parse("2023-12-07") },
+                new MinecraftVersionInfo { Id = "1.20.3", Type = "release", ReleaseTime = DateTime.Parse("2023-12-04") },
+                new MinecraftVersionInfo { Id = "1.20.2", Type = "release", ReleaseTime = DateTime.Parse("2023-09-20") },
+                new MinecraftVersionInfo { Id = "1.20.1", Type = "release", ReleaseTime = DateTime.Parse("2023-06-12") },
+                new MinecraftVersionInfo { Id = "1.20", Type = "release", ReleaseTime = DateTime.Parse("2023-06-02") },
+
+                new MinecraftVersionInfo { Id = "26.1-rc-3", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-03-23") },
+                new MinecraftVersionInfo { Id = "26.1-rc-2", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-03-20") },
+                new MinecraftVersionInfo { Id = "26.1-rc-1", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-03-19") },
+                new MinecraftVersionInfo { Id = "26.1-pre-3", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-03-17") },
+                new MinecraftVersionInfo { Id = "26.1-pre-2", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-03-13") },
+                new MinecraftVersionInfo { Id = "26.1-pre-1", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-03-10") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-11", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-03-03") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-10", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-02-24") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-9", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-02-18") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-8", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-02-17") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-7", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-02-11") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-6", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-02-03") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-5", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-01-27") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-4", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-01-20") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-3", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-01-13") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-2", Type = "snapshot", ReleaseTime = DateTime.Parse("2026-01-07") },
+                new MinecraftVersionInfo { Id = "26.1-snapshot-1", Type = "snapshot", ReleaseTime = DateTime.Parse("2025-12-16") },
+                new MinecraftVersionInfo { Id = "1.21.11-rc3", Type = "snapshot", ReleaseTime = DateTime.Parse("2025-12-08") },
+                new MinecraftVersionInfo { Id = "1.21.11-rc2", Type = "snapshot", ReleaseTime = DateTime.Parse("2025-12-05") },
+                new MinecraftVersionInfo { Id = "1.21.11-rc1", Type = "snapshot", ReleaseTime = DateTime.Parse("2025-12-04") },
+            };
+        }
+
         /// <summary>
         /// 获取正式版列表
         /// </summary>
@@ -248,7 +296,12 @@ namespace MinecraftLuanch
 
         private void AppendLog(string message)
         {
-            _onLog?.Invoke(message);
+            _onLog?.Invoke(NormalizeLogMessage(message));
+        }
+
+        private static string NormalizeLogMessage(string message)
+        {
+            return string.IsNullOrWhiteSpace(message) ? string.Empty : message;
         }
 
         /// <summary>

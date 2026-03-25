@@ -1,31 +1,26 @@
-# Visual Studio 配置
+# Visual Studio / Rider
 .vs/
+.idea/
+*.suo
+*.user
+*.sln.docstates
 
-# 编译输出
+# Build outputs
 bin/
 obj/
 
-# 用户配置文件
-*.user
-*.suo
+# Local .NET CLI cache
+.dotnet-home/
 
-# 运行时配置
-*.runtimeconfig.json
-
-# 游戏数据目录（不纳入版本控制）
-.minecraft/
-
-# 用户设置文件
-settings.txt
-
-# 日志文件
+# Runtime / logs
 *.log
 logs/
+*.runtimeconfig.json
 
-# Windows 系统文件
+# Local game data and generated settings
+.minecraft/
+settings.txt
+
+# Windows
 Thumbs.db
 Desktop.ini
-
-# IDE 文件
-.idea/
-*.sln.docstates

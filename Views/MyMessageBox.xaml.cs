@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;
+using Button = System.Windows.Controls.Button;
 
 namespace MinecraftLuanch
 {
@@ -49,20 +50,20 @@ namespace MinecraftLuanch
             switch (icon)
             {
                 case MessageBoxImage.Information:
-                    iconText = "ℹ️";
+                    iconText = "i";
                     break;
                 case MessageBoxImage.Question:
-                    iconText = "❓";
+                    iconText = "?";
                     break;
                 case MessageBoxImage.Warning:
-                    iconText = "⚠️";
+                    iconText = "!";
                     break;
                 case MessageBoxImage.Error:
-                    iconText = "❌";
+                    iconText = "x";
                     break;
                 case MessageBoxImage.None:
                 default:
-                    iconText = "💬";
+                    iconText = "...";
                     break;
             }
 
@@ -99,7 +100,7 @@ namespace MinecraftLuanch
 
         private void AddButton(string content, MessageBoxResult result, string styleKey)
         {
-            var button = new System.Windows.Controls.Button
+            var button = new Button
             {
                 Content = content,
                 Style = (Style)FindResource(styleKey),
@@ -118,7 +119,7 @@ namespace MinecraftLuanch
         private void CloseWithAnimation()
         {
             var fadeOut = new Storyboard();
-            
+
             var opacityAnim = new DoubleAnimation
             {
                 From = 1,
@@ -126,7 +127,7 @@ namespace MinecraftLuanch
                 Duration = System.TimeSpan.FromSeconds(0.15),
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
             };
-            
+
             var scaleXAnim = new DoubleAnimation
             {
                 From = 1,
@@ -134,7 +135,7 @@ namespace MinecraftLuanch
                 Duration = System.TimeSpan.FromSeconds(0.15),
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
             };
-            
+
             var scaleYAnim = new DoubleAnimation
             {
                 From = 1,
@@ -145,10 +146,10 @@ namespace MinecraftLuanch
 
             Storyboard.SetTarget(opacityAnim, MainBorder);
             Storyboard.SetTargetProperty(opacityAnim, new PropertyPath(OpacityProperty));
-            
+
             Storyboard.SetTarget(scaleXAnim, MainBorder);
             Storyboard.SetTargetProperty(scaleXAnim, new PropertyPath("(UIElement.RenderTransform).(ScaleTransform.ScaleX)"));
-            
+
             Storyboard.SetTarget(scaleYAnim, MainBorder);
             Storyboard.SetTargetProperty(scaleYAnim, new PropertyPath("(UIElement.RenderTransform).(ScaleTransform.ScaleY)"));
 
@@ -166,19 +167,13 @@ namespace MinecraftLuanch
 
             if (e.Key == System.Windows.Input.Key.Enter)
             {
-                var primaryButton = ButtonPanel.Children[ButtonPanel.Children.Count - 1] as System.Windows.Controls.Button;
-                if (primaryButton != null)
-                {
-                    primaryButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-                }
+                var primaryButton = ButtonPanel.Children[ButtonPanel.Children.Count - 1] as Button;
+                primaryButton?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }
             else if (e.Key == System.Windows.Input.Key.Escape)
             {
-                var cancelButton = ButtonPanel.Children[0] as System.Windows.Controls.Button;
-                if (cancelButton != null)
-                {
-                    cancelButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-                }
+                var cancelButton = ButtonPanel.Children.Count > 0 ? ButtonPanel.Children[0] as Button : null;
+                cancelButton?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }
         }
     }
